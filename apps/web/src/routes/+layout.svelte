@@ -5,6 +5,8 @@
 	import { SITE_URL } from '#lib/site.js';
 	import Header from '#lib/components/Header.svelte';
 	import Footer from '#lib/components/Footer.svelte';
+	import '@fontsource-variable/geist';
+	import '@fontsource-variable/geist-mono';
 	import './layout.css';
 	import type { LayoutProps } from './$types';
 

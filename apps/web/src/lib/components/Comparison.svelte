@@ -132,7 +132,7 @@
 												/>
 											</svg></span
 										>
-										<span class="w-20 shrink-0 text-right font-semibold tabular-nums"
+										<span class="w-20 shrink-0 text-right font-mono font-semibold tabular-nums"
 											>{row.text}</span
 										>
 									</dd>

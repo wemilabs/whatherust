@@ -6,10 +6,10 @@ import satori from 'satori';
 const root = new URL('../', import.meta.url);
 const read = (path) => readFileSync(new URL(path, root));
 const font = (weight) => ({
-	name: 'Inter',
+	name: 'Geist',
 	weight,
 	style: 'normal',
-	data: read(`node_modules/@fontsource/inter/files/inter-latin-${weight}-normal.woff`)
+	data: read(`node_modules/@fontsource/geist/files/geist-latin-${weight}-normal.woff`)
 });
 const fonts = [font(400), font(800)];
 const logo = `data:image/svg+xml;base64,${read('src/lib/assets/logo.svg').toString('base64')}`;
@@ -32,7 +32,7 @@ for (const locale of locales) {
 			padding: 80,
 			background: 'linear-gradient(135deg, #1c1917 0%, #0c0a09 60%, #2a1208 100%)',
 			color: '#fafaf9',
-			fontFamily: 'Inter'
+			fontFamily: 'Geist'
 		},
 		[
 			{ type: 'img', props: { src: logo, width: 300, height: 300 } },

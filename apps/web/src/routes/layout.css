@@ -4,7 +4,9 @@
 
 @theme {
 	--font-sans:
-		ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+		'Geist Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+		Arial, sans-serif;
+	--font-mono: 'Geist Mono Variable', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	--color-rust-50: #fff4ee;
 	--color-rust-400: #f0703f;
 	--color-rust-600: #c2410c;

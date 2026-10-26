@@ -29,14 +29,26 @@ enum UpdateCheck {
 #[derive(Default)]
 struct UpdateState {
     busy: AtomicBool,
+    manual_requested: AtomicBool,
     dismissed: Mutex<Option<String>>,
 }
 
-struct UpdateBusyGuard<'a>(&'a AtomicBool);
+impl UpdateState {
+    fn effective_kind(&self, kind: UpdateCheck) -> UpdateCheck {
+        if kind == UpdateCheck::Manual || self.manual_requested.load(Ordering::Acquire) {
+            UpdateCheck::Manual
+        } else {
+            UpdateCheck::Automatic
+        }
+    }
+}
+
+struct UpdateBusyGuard<'a>(&'a UpdateState);
 
 impl Drop for UpdateBusyGuard<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        self.0.manual_requested.store(false, Ordering::Release);
+        self.0.busy.store(false, Ordering::Release);
     }
 }
 
@@ -236,9 +248,12 @@ pub fn run() {
 async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
     let state = app.state::<UpdateState>();
     if state.busy.swap(true, Ordering::AcqRel) {
+        if kind == UpdateCheck::Manual {
+            state.manual_requested.store(true, Ordering::Release);
+        }
         return;
     }
-    let _busy = UpdateBusyGuard(&state.busy);
+    let _busy = UpdateBusyGuard(&state);
 
     async fn check(
         app: &AppHandle,
@@ -246,7 +261,7 @@ async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
         kind: UpdateCheck,
     ) -> tauri_plugin_updater::Result<()> {
         let Some(update) = app.updater()?.check().await? else {
-            if kind == UpdateCheck::Manual {
+            if state.effective_kind(kind) == UpdateCheck::Manual {
                 app.dialog()
                     .message(format!(
                         "WhatheRust {} is the latest version.",
@@ -259,7 +274,11 @@ async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
             return Ok(());
         };
         let version = update.version.clone();
-        if !should_prompt(kind, &version, state.dismissed.lock().unwrap().as_deref()) {
+        if !should_prompt(
+            state.effective_kind(kind),
+            &version,
+            state.dismissed.lock().unwrap().as_deref(),
+        ) {
             return Ok(());
         }
 
@@ -293,7 +312,7 @@ async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
     }
 
     match check(&app, &state, kind).await {
-        Err(error) if kind == UpdateCheck::Manual => {
+        Err(error) if state.effective_kind(kind) == UpdateCheck::Manual => {
             app.dialog()
                 .message(format!("Could not check for updates: {error}"))
                 .title("WhatheRust update")
@@ -489,7 +508,9 @@ fn toggle_main_window(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{UpdateCheck, is_allowed_url, should_prompt};
+    use std::sync::atomic::Ordering;
+
+    use super::{UpdateCheck, UpdateState, is_allowed_url, should_prompt};
 
     #[test]
     fn should_prompt_respects_dismissed_version_for_automatic_checks() {
@@ -509,6 +530,27 @@ mod tests {
     #[test]
     fn should_prompt_always_prompts_for_manual_checks() {
         assert!(should_prompt(UpdateCheck::Manual, "2.0.0", Some("2.0.0")));
+    }
+
+    #[test]
+    fn effective_kind_respects_manual_requests() {
+        let state = UpdateState::default();
+
+        assert_eq!(
+            state.effective_kind(UpdateCheck::Automatic),
+            UpdateCheck::Automatic
+        );
+
+        state.manual_requested.store(true, Ordering::Release);
+
+        assert_eq!(
+            state.effective_kind(UpdateCheck::Automatic),
+            UpdateCheck::Manual
+        );
+        assert_eq!(
+            state.effective_kind(UpdateCheck::Manual),
+            UpdateCheck::Manual
+        );
     }
 
     #[test]

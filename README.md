@@ -1,6 +1,8 @@
 # WhatheRust
 
-<img src="apps/desktop/src-tauri/icons/icon.png" alt="WhatheRust logo" width="128">
+<p align="center">
+  <img src="apps/desktop/src-tauri/icons/icon.png" alt="WhatheRust logo" width="128">
+</p>
 
 An unofficial native-webview wrapper for the official WhatsApp Web client, named WhatheRust so it isn't confused with Meta's own WhatsApp desktop app. It uses the operating system's webview instead of bundling Electron and Chromium.
 

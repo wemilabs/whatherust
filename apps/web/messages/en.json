@@ -60,7 +60,6 @@
 	"shotTrayCaption": "The tray menu keeps it running in the background.",
 	"compareTitle": "Benchmarks",
 	"compareIntro": "Electron apps ship their own copy of Chromium and Node.js. We built the same WhatsApp Web wrapper with Electron and compared download and install sizes on Linux, macOS and Windows.",
-	"compareMethodSummary": "Measured on October 26, 2026, against a minimal Electron 45 wrapper loading the same page.",
 	"compareSize": "Download size",
 	"compareLower": "Lower is better.",
 	"compareUbuntuTitle": "Ubuntu 22.04",

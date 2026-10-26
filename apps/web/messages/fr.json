@@ -60,7 +60,6 @@
 	"shotTrayCaption": "Le menu de la zone de notification la garde active en arrière-plan.",
 	"compareTitle": "Benchmarks",
 	"compareIntro": "Les apps Electron embarquent leur propre copie de Chromium et de Node.js. Nous avons construit le même wrapper WhatsApp Web avec Electron et comparé les tailles de téléchargement et d’installation sous Linux, macOS et Windows.",
-	"compareMethodSummary": "Mesuré le 26 octobre 2026, face à un wrapper Electron 45 minimal chargeant la même page.",
 	"compareSize": "Taille du téléchargement",
 	"compareLower": "Plus c’est bas, mieux c’est.",
 	"compareUbuntuTitle": "Ubuntu 22.04",

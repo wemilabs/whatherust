@@ -150,8 +150,6 @@
 			{/each}
 		</div>
 
-		<p class="mt-6 max-w-3xl text-sm leading-relaxed text-muted">{m.compareMethodSummary()}</p>
-
 		<p class="mt-8 max-w-3xl text-sm leading-relaxed text-muted">
 			{m.compareOfficial()}
 			{m.compareSources()}

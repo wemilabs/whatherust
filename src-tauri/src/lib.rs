@@ -19,7 +19,13 @@ pub fn run() {
             show_main_window(app);
         }))
         .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_opener::init())
+        // The injected link-click handler calls opener IPC, which the remote page may not use;
+        // let new-window requests reach `on_new_window` instead.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .setup(|app| {
             let window_config = app
                 .config()

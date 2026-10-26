@@ -34,6 +34,11 @@ export default defineConfig(
 		}
 	},
 	{
+		// Release notes are sanitized server-side by renderMarkdown before {@html}.
+		files: ['src/routes/changelog/+page.svelte'],
+		rules: { 'svelte/no-at-html-tags': 'off' }
+	},
+	{
 		// Override or add rule settings here, such as:
 		// 'svelte/button-has-type': 'error'
 		rules: {}

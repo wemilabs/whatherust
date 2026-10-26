@@ -14,7 +14,7 @@ export default defineConfig({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 			adapter: adapter(),
-			prerender: { entries: ['/fr', '/fr/changelog'] }
+			prerender: { entries: ['*', '/fr', '/fr/changelog'] }
 		}),
 
 		paraglideVitePlugin({

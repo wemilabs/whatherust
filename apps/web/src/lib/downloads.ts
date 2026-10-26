@@ -24,7 +24,7 @@ function findAsset(assets: Asset[], pattern: RegExp): Asset | undefined {
 	return assets.find((asset) => pattern.test(asset.name));
 }
 
-export function pickAssets(release: Release | null): {
+export function pickAssets(release: Pick<Release, 'assets'> | null): {
 	windows: { setup?: Asset; msi?: Asset };
 	macos: { dmg?: Asset };
 	linux: { appimage?: Asset; deb?: Asset; rpm?: Asset };

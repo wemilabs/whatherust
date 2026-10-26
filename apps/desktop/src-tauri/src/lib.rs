@@ -14,18 +14,18 @@ use tauri_plugin_updater::UpdaterExt;
 mod settings;
 
 const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
-// Rust persists the setting; the page syncs its cached copy so notification construction stays synchronous.
+// The page only caches the Rust value; the hook re-reads it so page code can't override the setting.
 const NOTIFICATION_GATE: &str = r#"(() => {
   const Polyfill = window.Notification;
   if (typeof Polyfill !== "function") return;
   let enabled = __NOTIFICATIONS_ENABLED__;
-  Object.defineProperty(window, "__whatherustSetNotificationsEnabled", {
-    value: (value) => { enabled = value === true; },
-  });
-  window.__TAURI_INTERNALS__
-    .invoke("notifications_enabled")
-    .then((value) => { enabled = value === true; })
-    .catch(() => {});
+  const sync = () =>
+    window.__TAURI_INTERNALS__
+      .invoke("notifications_enabled")
+      .then((value) => { enabled = value === true; })
+      .catch(() => {});
+  Object.defineProperty(window, "__whatherustSyncNotifications", { value: sync });
+  sync();
   window.Notification = new Proxy(Polyfill, {
     construct(target, args, newTarget) {
       return enabled

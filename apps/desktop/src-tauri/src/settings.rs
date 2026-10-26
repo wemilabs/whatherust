@@ -85,10 +85,7 @@ pub fn set_settings(
 
     *current = settings;
     if notifications_changed && let Some(window) = app.get_webview_window("main") {
-        let _ = window.eval(format!(
-            "window.__whatherustSetNotificationsEnabled?.({})",
-            settings.notifications_enabled
-        ));
+        let _ = window.eval("window.__whatherustSyncNotifications?.()");
     }
     Ok(settings)
 }

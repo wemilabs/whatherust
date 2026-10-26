@@ -8,14 +8,23 @@ export function renderMarkdown(markdown: string): string {
 	return sanitizeHtml(html, {
 		allowedTags,
 		allowedAttributes: {
-			a: ['href', 'title', 'rel'],
+			a: ['href', 'title', 'rel', 'target'],
 			img: ['src', 'alt', 'title', 'width', 'height'],
 			input: ['type', 'checked', 'disabled'],
 			code: ['class']
 		},
 		allowedSchemes: ['http', 'https', 'mailto'],
 		transformTags: {
-			a: sanitizeHtml.simpleTransform('a', { rel: 'noopener noreferrer nofollow' }),
+			a: (tagName, attribs) => {
+				const transformed = { ...attribs };
+				if (/^https?:\/\//i.test(transformed.href ?? '')) {
+					transformed.target = '_blank';
+					transformed.rel = 'noopener noreferrer';
+				} else if (transformed.target !== '_blank') {
+					delete transformed.target;
+				}
+				return { tagName, attribs: transformed };
+			},
 			img: sanitizeHtml.simpleTransform('img', { loading: 'lazy' }),
 			h1: 'h3',
 			h2: 'h3'

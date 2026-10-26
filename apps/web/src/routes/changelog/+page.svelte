@@ -31,7 +31,8 @@
 			<p class="text-muted">{m.changelogEmpty()}</p>
 			<a
 				href={RELEASES_URL}
-				rel="external"
+				target="_blank"
+				rel="external noopener noreferrer"
 				class="mt-4 inline-block text-rust-700 underline decoration-transparent underline-offset-4 hover:decoration-current dark:text-rust-400"
 				>{m.changelogAll()}</a
 			>
@@ -65,7 +66,8 @@
 							</div>
 							<a
 								href={release.url}
-								rel="external"
+								target="_blank"
+								rel="external noopener noreferrer"
 								class="mt-4 inline-block text-sm text-rust-700 underline decoration-transparent underline-offset-4 hover:decoration-current dark:text-rust-400"
 								>{m.changelogOnGitHub()}</a
 							>
@@ -76,7 +78,8 @@
 		</ol>
 		<a
 			href={RELEASES_URL}
-			rel="external"
+			target="_blank"
+			rel="external noopener noreferrer"
 			class="mt-8 inline-block text-sm text-rust-700 underline decoration-transparent underline-offset-4 hover:decoration-current dark:text-rust-400"
 			>{m.changelogAll()}</a
 		>

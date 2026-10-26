@@ -143,19 +143,22 @@
 			{m.compareOfficialIntro()}
 			<a
 				href="https://x.com/mthlish/status/2114650982663758226"
-				rel="external"
+				target="_blank"
+				rel="external noopener noreferrer"
 				class="text-rust-700 underline decoration-transparent underline-offset-4 hover:decoration-current dark:text-rust-400"
 				>{m.compareOfficialSourceX()}</a
 			>,
 			<a
 				href="https://www.windowslatest.com/2025/07/21/whatsapp-for-windows-11-is-switching-back-to-chromium-web-wrapper-from-uwp-native/"
-				rel="external"
+				target="_blank"
+				rel="external noopener noreferrer"
 				class="text-rust-700 underline decoration-transparent underline-offset-4 hover:decoration-current dark:text-rust-400"
 				>{m.compareOfficialSourceWindowsLatest()}</a
 			>,
 			<a
 				href="https://daringfireball.net/2025/11/meta_whatsapp_windows_shitty_web_app"
-				rel="external"
+				target="_blank"
+				rel="external noopener noreferrer"
 				class="text-rust-700 underline decoration-transparent underline-offset-4 hover:decoration-current dark:text-rust-400"
 				>{m.compareOfficialSourceDaringFireball()}</a
 			>.

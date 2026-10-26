@@ -7,7 +7,22 @@ describe('renderMarkdown', () => {
 		expect(html).toContain('<h3>Fixes</h3>');
 		expect(html).toContain('<strong>Tray</strong>');
 		expect(html).toContain('href="https://github.com/x"');
-		expect(html).toContain('rel="noopener noreferrer nofollow"');
+		expect(html).toContain('target="_blank"');
+		expect(html).toContain('rel="noopener noreferrer"');
+	});
+
+	it('does not add new-tab attributes to relative or anchor links', () => {
+		const html = renderMarkdown('[anchor](#x)\n\n[relative](/changelog)');
+		expect(html).toContain('<a href="#x">anchor</a>');
+		expect(html).toContain('<a href="/changelog">relative</a>');
+		expect(html).not.toContain('target=');
+		expect(html).not.toContain('rel=');
+	});
+
+	it('does not pass through a user-supplied non-blank target', () => {
+		const html = renderMarkdown('<a href="#x" target="_top">anchor</a>');
+		expect(html).toContain('<a href="#x">anchor</a>');
+		expect(html).not.toContain('target="_top"');
 	});
 
 	it('strips scripts, event handlers and javascript: links', () => {

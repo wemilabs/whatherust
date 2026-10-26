@@ -31,14 +31,16 @@
 			<p class="mt-5 text-sm text-muted">
 				<a
 					href={REPO_URL}
-					rel="external"
+					target="_blank"
+					rel="external noopener noreferrer"
 					class="text-rust-700 underline decoration-transparent underline-offset-4 transition hover:decoration-current dark:text-rust-400"
 					>{m.openSource()}</a
 				>
 				<span aria-hidden="true"> · </span>
 				<a
 					href={`${REPO_URL}/blob/main/LICENSE`}
-					rel="external"
+					target="_blank"
+					rel="external noopener noreferrer"
 					class="text-rust-700 underline decoration-transparent underline-offset-4 transition hover:decoration-current dark:text-rust-400"
 					>{m.licenseMit()}</a
 				>

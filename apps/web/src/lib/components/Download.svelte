@@ -153,7 +153,8 @@
 
 	<a
 		href={REPO_URL}
-		rel="external"
+		target="_blank"
+		rel="external noopener noreferrer"
 		class="inline-flex h-12 items-center rounded-full border border-line-strong bg-surface px-6 text-[17px] text-fg transition-colors hover:bg-bg"
 	>
 		{m.viewOnGitHub()}

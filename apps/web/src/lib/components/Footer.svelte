@@ -22,14 +22,29 @@
 			<div>
 				<h2 class="text-sm font-medium text-fg">{m.footerProject()}</h2>
 				<ul class="mt-4 space-y-2 text-muted">
-					<li><a href={REPO_URL} rel="external" class="hover:text-fg">{m.footerSource()}</a></li>
 					<li>
-						<a href={RELEASES_URL} rel="external" class="hover:text-fg">{m.footerReleases()}</a>
+						<a
+							href={REPO_URL}
+							target="_blank"
+							rel="external noopener noreferrer"
+							class="hover:text-fg">{m.footerSource()}</a
+						>
+					</li>
+					<li>
+						<a
+							href={RELEASES_URL}
+							target="_blank"
+							rel="external noopener noreferrer"
+							class="hover:text-fg">{m.footerReleases()}</a
+						>
 					</li>
 					<li><a href={href('/changelog')} class="hover:text-fg">{m.footerChangelog()}</a></li>
 					<li>
-						<a href={`${REPO_URL}/blob/main/LICENSE`} rel="external" class="hover:text-fg"
-							>{m.footerLicense()}</a
+						<a
+							href={`${REPO_URL}/blob/main/LICENSE`}
+							target="_blank"
+							rel="external noopener noreferrer"
+							class="hover:text-fg">{m.footerLicense()}</a
 						>
 					</li>
 				</ul>
@@ -38,11 +53,19 @@
 				<h2 class="text-sm font-medium text-fg">{m.footerResources()}</h2>
 				<ul class="mt-4 space-y-2 text-muted">
 					<li>
-						<a href="https://tauri.app" rel="external" class="hover:text-fg">{m.footerTauri()}</a>
+						<a
+							href="https://tauri.app"
+							target="_blank"
+							rel="external noopener noreferrer"
+							class="hover:text-fg">{m.footerTauri()}</a
+						>
 					</li>
 					<li>
-						<a href="https://www.rust-lang.org" rel="external" class="hover:text-fg"
-							>{m.footerRust()}</a
+						<a
+							href="https://www.rust-lang.org"
+							target="_blank"
+							rel="external noopener noreferrer"
+							class="hover:text-fg">{m.footerRust()}</a
 						>
 					</li>
 				</ul>

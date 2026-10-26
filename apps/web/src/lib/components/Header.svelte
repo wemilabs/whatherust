@@ -37,7 +37,8 @@
 			</a>
 			<a
 				href={REPO_URL}
-				rel="external"
+				target="_blank"
+				rel="external noopener noreferrer"
 				class="inline-flex h-9 items-center gap-1.5 rounded-full border border-line px-3 text-sm text-fg hover:bg-black/5 dark:hover:bg-white/[0.06]"
 				aria-label={starsLabel === null ? m.githubLink() : m.githubStars({ stars: String(stars) })}
 			>

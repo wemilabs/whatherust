@@ -1,6 +1,6 @@
 # WhatheRust
 
-<img src="src-tauri/icons/icon.png" alt="WhatheRust logo" width="128">
+<img src="apps/desktop/src-tauri/icons/icon.png" alt="WhatheRust logo" width="128">
 
 An unofficial native-webview wrapper for the official WhatsApp Web client, named WhatheRust so it isn't confused with Meta's own WhatsApp desktop app. It uses the operating system's webview instead of bundling Electron and Chromium.
 
@@ -20,16 +20,21 @@ Tauri uses WebView2, WKWebView, or WebKitGTK provided by the operating system ra
 ## Architecture
 
 ```text
-src/index.html                         Static fallback required by Tauri
-src-tauri/
-├── Cargo.toml                          Rust package and dependencies
-├── build.rs                            Tauri build integration
-├── tauri.conf.json                     Window, frontend, and bundle configuration
-├── capabilities/whatsapp-web.json      Remote notification permissions
-├── icons/                              App and tray icons; icon.svg and tray-template.svg are the sources
-└── src/
-    ├── lib.rs                          Webview, tray, and plugin setup
-    └── main.rs                         Application entry point
+apps/
+├── desktop/
+│   ├── src/                            Static fallback required by Tauri
+│   └── src-tauri/
+│       ├── Cargo.toml                  Rust package and dependencies
+│       ├── build.rs                    Tauri build integration
+│       ├── tauri.conf.json             Window, frontend, bundle, and updater configuration
+│       ├── capabilities/whatsapp-web.json
+│       ├── icons/                      App and tray icons; SVG files are the sources
+│       └── src/                        Webview, tray, and plugin setup
+└── web/                                SvelteKit website
+.github/workflows/                      CI and release workflows
+package.json                            Root scripts and package manager
+pnpm-workspace.yaml                     Workspace package list
+turbo.json                              Monorepo task configuration
 ```
 
 ## Prerequisites
@@ -42,14 +47,39 @@ src-tauri/
 
 ## Run and build
 
-From the `src-tauri` directory:
+Install the workspace dependencies from the repository root:
 
 ```sh
-cargo tauri dev
-cargo tauri build
+pnpm install
 ```
 
-Bundles are written under `src-tauri/target/release/bundle/`.
+Run the desktop wrapper or website from the repository root:
+
+```sh
+pnpm dev:desktop
+pnpm dev:web
+```
+
+Build the desktop bundles from the repository root:
+
+```sh
+pnpm --filter @whatherust/desktop tauri build
+```
+
+Alternatively, run `cargo tauri dev` from `apps/desktop/src-tauri`. Bundles are written under
+`apps/desktop/src-tauri/target/release/bundle/`.
+
+## Auto-update
+
+Release builds check GitHub Releases for updates on launch. Updates are signed with the updater
+key; configure the `TAURI_SIGNING_PRIVATE_KEY` repository secret for release builds. Push a `vX.Y.Z`
+tag to create a draft release, which is published after all platform builds succeed.
+
+## Website
+
+The SvelteKit website lives in `apps/web`. Run it with `pnpm dev:web`; an optional `GITHUB_TOKEN`
+environment variable raises the GitHub API rate limit without needing any scopes. The site is
+deployed on Vercel.
 
 ## Limitations
 
@@ -59,10 +89,11 @@ Bundles are written under `src-tauri/target/release/bundle/`.
 
 ## Icons
 
-The icons are generated from the SVG sources in `src-tauri/icons/`:
+The icons are generated from the SVG sources in `apps/desktop/src-tauri/icons/`:
 
 ```sh
+cd apps/desktop/src-tauri
 rsvg-convert -w 1024 -h 1024 icons/icon.svg -o /tmp/icon.png
-cargo tauri icon /tmp/icon.png -o /tmp/icons  # copy 32x32, 128x128, 128x128@2x, icon.png, icon.icns, icon.ico into icons/
+cargo tauri icon /tmp/icon.png -o icons
 rsvg-convert -w 44 -h 44 icons/tray-template.svg -o icons/tray-template.png
 ```

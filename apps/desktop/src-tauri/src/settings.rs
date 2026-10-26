@@ -1,7 +1,7 @@
 use std::{fs, path::PathBuf, sync::Mutex};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State, command};
+use tauri::{AppHandle, Manager, State, command};
 use tauri_plugin_autostart::ManagerExt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +70,7 @@ pub fn set_settings(
         .lock()
         .map_err(|error| format!("settings lock poisoned: {error}"))?;
     let previous = *current;
+    let notifications_changed = settings.notifications_enabled != previous.notifications_enabled;
 
     if settings.start_on_login != previous.start_on_login {
         apply_autostart(&app, settings.start_on_login)?;
@@ -83,6 +84,12 @@ pub fn set_settings(
     }
 
     *current = settings;
+    if notifications_changed && let Some(window) = app.get_webview_window("main") {
+        let _ = window.eval(format!(
+            "window.__whatherustSetNotificationsEnabled?.({})",
+            settings.notifications_enabled
+        ));
+    }
     Ok(settings)
 }
 

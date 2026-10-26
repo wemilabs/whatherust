@@ -14,16 +14,23 @@ use tauri_plugin_updater::UpdaterExt;
 mod settings;
 
 const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
+// Rust persists the setting; the page syncs its cached copy so notification construction stays synchronous.
 const NOTIFICATION_GATE: &str = r#"(() => {
   const Polyfill = window.Notification;
   if (typeof Polyfill !== "function") return;
+  let enabled = __NOTIFICATIONS_ENABLED__;
+  Object.defineProperty(window, "__whatherustSetNotificationsEnabled", {
+    value: (value) => { enabled = value === true; },
+  });
+  window.__TAURI_INTERNALS__
+    .invoke("notifications_enabled")
+    .then((value) => { enabled = value === true; })
+    .catch(() => {});
   window.Notification = new Proxy(Polyfill, {
-    construct(target, args) {
-      window.__TAURI_INTERNALS__
-        .invoke("notifications_enabled")
-        .then((enabled) => enabled && Reflect.construct(target, args))
-        .catch(() => {});
-      return Object.create(target.prototype);
+    construct(target, args, newTarget) {
+      return enabled
+        ? Reflect.construct(target, args, newTarget)
+        : Object.create(target.prototype);
     },
   });
 })();"#;
@@ -70,7 +77,16 @@ pub fn run() {
             app.manage(settings::SettingsStore::load(
                 data_dir.join("settings.json"),
             ));
-            let start_on_login = app.state::<settings::SettingsStore>().get().start_on_login;
+            let settings = app.state::<settings::SettingsStore>().get();
+            let start_on_login = settings.start_on_login;
+            let notification_gate = NOTIFICATION_GATE.replace(
+                "__NOTIFICATIONS_ENABLED__",
+                if settings.notifications_enabled {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
             if start_on_login {
                 // Re-register so a moved or updated app keeps starting at login.
                 if let Err(error) = settings::apply_autostart(app.handle(), true) {
@@ -99,7 +115,7 @@ pub fn run() {
             let builder = WebviewWindowBuilder::from_config(app.handle(), window_config)?
                 // macOS ignores this override; WKWebView persists by bundle identifier.
                 .data_directory(data_dir.join("webview"))
-                .initialization_script(NOTIFICATION_GATE)
+                .initialization_script(&notification_gate)
                 // WhatsApp Web rejects or degrades WebKit user agents.
                 .user_agent(USER_AGENT)
                 .on_navigation({

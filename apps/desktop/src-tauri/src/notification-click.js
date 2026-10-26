@@ -10,6 +10,9 @@
   const internals = new WeakMap();
   let nextId = Math.floor(Math.random() * 0x3fffffff);
 
+  // Listeners are keyed by (listener, capture), matching how EventTarget dedupes and removes them.
+  const isCapture = (options) => Boolean(typeof options === "boolean" ? options : options && options.capture);
+
   const fire = (notification, type) => {
     const event = new Event(type, { cancelable: type === "click" });
     notification.dispatchEvent(event);
@@ -39,7 +42,7 @@
       const settings = options || {};
       nextId = (nextId % 0x7ffffffe) + 1;
       const id = nextId;
-      internals.set(this, { id, closed: false, clickListeners: new Set() });
+      internals.set(this, { id, closed: false, clickListeners: [new Set(), new Set()] });
 
       this.title = String(title);
       this.body = settings.body === undefined ? "" : String(settings.body);
@@ -61,12 +64,12 @@
     }
 
     addEventListener(type, listener, options) {
-      if (type === "click" && listener) internals.get(this).clickListeners.add(listener);
+      if (type === "click" && listener) internals.get(this).clickListeners[+isCapture(options)].add(listener);
       super.addEventListener(type, listener, options);
     }
 
     removeEventListener(type, listener, options) {
-      if (type === "click") internals.get(this).clickListeners.delete(listener);
+      if (type === "click") internals.get(this).clickListeners[+isCapture(options)].delete(listener);
       super.removeEventListener(type, listener, options);
     }
 
@@ -104,7 +107,7 @@
       shown.delete(id);
       window.focus();
       const handled =
-        typeof notification.onclick === "function" || internals.get(notification).clickListeners.size > 0;
+        typeof notification.onclick === "function" || internals.get(notification).clickListeners.some((listeners) => listeners.size > 0);
       fire(notification, "click");
       if (!handled) openChatTitled(notification.title);
       notification.close();

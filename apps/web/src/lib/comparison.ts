@@ -23,6 +23,23 @@ export const macosMeasurements = {
 	}
 } as const;
 
+export const windowsMeasurements = {
+	whatherust: {
+		name: 'WhatheRust 0.1.0',
+		installer: 3_752_083,
+		installedApp: 15_771_551,
+		workingSetMedianMiB: 559.39,
+		workingSetRunsMiB: [549.36, 559.39]
+	},
+	electron: {
+		name: 'Electron 45.0.0',
+		installer: 121_197_184,
+		installedApp: 374_236_068,
+		workingSetMedianMiB: 497.21,
+		workingSetRunsMiB: [483.77, 497.21]
+	}
+} as const;
+
 export function formatMB(bytes: number): string {
 	return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }

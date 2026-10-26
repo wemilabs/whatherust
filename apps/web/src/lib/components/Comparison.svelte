@@ -6,11 +6,13 @@
 		formatMiB,
 		macosMeasurements,
 		measuredOn,
-		measurements
+		measurements,
+		windowsMeasurements
 	} from '#lib/comparison.js';
 
 	const { whatherust: linuxWhatheRust, electron: linuxElectron } = measurements;
 	const { whatherust: macWhatheRust, electron: macElectron } = macosMeasurements;
+	const { whatherust: windowsWhatheRust, electron: windowsElectron } = windowsMeasurements;
 
 	const date = $derived(
 		new Intl.DateTimeFormat(getLocale(), { dateStyle: 'long', timeZone: 'UTC' }).format(
@@ -152,6 +154,73 @@
 			],
 			memoryNote: m.compareMacMemoryNote(),
 			method: m.compareMacMethod()
+		},
+		{
+			id: 'windows',
+			title: m.compareWindowsTitle(),
+			size: [
+				{
+					label: m.compareWindowsSizeInstaller(),
+					rows: [
+						{
+							name: windowsWhatheRust.name,
+							value: windowsWhatheRust.installer,
+							text: formatMB(windowsWhatheRust.installer),
+							detail: '',
+							ours: true
+						},
+						{
+							name: windowsElectron.name,
+							value: windowsElectron.installer,
+							text: formatMB(windowsElectron.installer),
+							detail: '',
+							ours: false
+						}
+					]
+				},
+				{
+					label: m.compareWindowsSizeInstalled(),
+					rows: [
+						{
+							name: windowsWhatheRust.name,
+							value: windowsWhatheRust.installedApp,
+							text: formatMB(windowsWhatheRust.installedApp),
+							detail: '',
+							ours: true
+						},
+						{
+							name: windowsElectron.name,
+							value: windowsElectron.installedApp,
+							text: formatMB(windowsElectron.installedApp),
+							detail: '',
+							ours: false
+						}
+					]
+				}
+			],
+			memory: [
+				{
+					label: m.compareWindowsMemoryLabel(),
+					rows: [
+						{
+							name: windowsWhatheRust.name,
+							value: windowsWhatheRust.workingSetMedianMiB,
+							text: formatMiB(windowsWhatheRust.workingSetMedianMiB),
+							detail: `runs: ${Math.round(windowsWhatheRust.workingSetRunsMiB[0])} / ${Math.round(windowsWhatheRust.workingSetRunsMiB[1])}`,
+							ours: true
+						},
+						{
+							name: windowsElectron.name,
+							value: windowsElectron.workingSetMedianMiB,
+							text: formatMiB(windowsElectron.workingSetMedianMiB),
+							detail: `runs: ${Math.round(windowsElectron.workingSetRunsMiB[0])} / ${Math.round(windowsElectron.workingSetRunsMiB[1])}`,
+							ours: false
+						}
+					]
+				}
+			],
+			memoryNote: m.compareWindowsMemoryNote(),
+			method: m.compareWindowsMethod()
 		}
 	]);
 
@@ -270,8 +339,6 @@
 				</section>
 			{/each}
 		</div>
-
-		<p class="mt-6 text-sm text-muted">{m.compareWindowsNote()}</p>
 
 		<p class="mt-8 max-w-3xl text-sm leading-relaxed text-muted">
 			{m.compareOfficial()}

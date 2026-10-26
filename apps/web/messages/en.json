@@ -60,7 +60,7 @@
 	"shotTrayCaption": "The tray menu keeps it running in the background.",
 	"compareLead": "Why not",
 	"compareTitle": "Electron?",
-	"compareIntro": "Electron apps ship their own copy of Chromium and Node.js. To see what that costs, we built the same WhatsApp Web wrapper with Electron and measured both on Linux and macOS.",
+	"compareIntro": "Electron apps ship their own copy of Chromium and Node.js. To see what that costs, we built the same WhatsApp Web wrapper with Electron and measured both on Linux, macOS and Windows.",
 	"compareSize": "Download size",
 	"compareMemory": "Memory at the login screen",
 	"compareLower": "Lower is better.",
@@ -68,7 +68,11 @@
 	"compareMacTitle": "macOS 26.6, Apple Silicon",
 	"compareMacSizeDmg": ".dmg (arm64)",
 	"compareMacSizeInstalled": "Installed app",
-	"compareWindowsNote": "Windows has not been measured yet.",
+	"compareWindowsTitle": "Windows Server 2022, x64",
+	"compareWindowsSizeInstaller": "Installer (.exe)",
+	"compareWindowsSizeInstalled": "Installed app",
+	"compareWindowsMemoryLabel": "Working set",
+	"compareWindowsMemoryNote": "Memory goes the other way on Windows too: WebView2 runs 8 processes to Electron's 5, and Electron's memory was still falling during sampling. Private working set: 239–249 MiB vs 223–231 MiB.",
 	"compareOfficial": "What about the official app? There is no official WhatsApp app for Linux, and on Windows it now loads web.whatsapp.com in a WebView2 container rather than Electron. We could not measure it on the same machine, so it is not in the chart.",
 	"compareSources": "Sources:",
 	"compareMethodTitle": "How we measured",
@@ -95,5 +99,6 @@
 	"compareLinuxMemoryNote": "Memory goes the other way on Linux: in our test, WebKitGTK used more memory than Electron's Chromium at the login screen. We show it anyway.",
 	"compareMacMemoryNote": "By macOS's own footprint metric (phys_footprint) the two are about even: 274–320 MiB vs 263–266 MiB.",
 	"compareMethod": "Measured on {date} on Ubuntu 22.04.5 (x86_64, WebKitGTK 2.50.4) in a virtual machine. WhatheRust 0.1.0 release build against a minimal Electron 45.0.0 wrapper (electron-builder 26.18.0) that loads the same page with the same user agent. Sizes are the built .deb and AppImage files. Memory: fresh profile on the WhatsApp Web QR login screen, 60 s idle, then the median of 5 samples taken 10 s apart, summing resident memory (RSS) over the whole process tree, including WebKit's web and network processes and Electron's helper processes.",
-	"compareMacMethod": "Measured on October 26, 2026 on macOS 26.6.2 (arm64, Apple M4 Pro VM), system WebKit 21624.5.1.11.3, against Electron 45.0.0 (electron-builder 26.18.0). Native arm64 builds; the released .dmg is universal and larger. Same QR-screen method as Linux, two runs; WebKit XPC processes attributed to the app are included."
+	"compareMacMethod": "Measured on October 26, 2026 on macOS 26.6.2 (arm64, Apple M4 Pro VM), system WebKit 21624.5.1.11.3, against Electron 45.0.0 (electron-builder 26.18.0). Native arm64 builds; the released .dmg is universal and larger. Same QR-screen method as Linux, two runs; WebKit XPC processes attributed to the app are included.",
+	"compareWindowsMethod": "Measured on October 26, 2026 on Windows Server 2022 (build 20348, x64 VM), WebView2 Runtime 156.0.4314.42, against Electron 45.0.0 (electron-builder 26.18.0). Sizes are the NSIS installers and the installed folders; Electron's 121 MB updater cache is not counted. Same QR-screen method, two runs, summing the working set of all app processes."
 }

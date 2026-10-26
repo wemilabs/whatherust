@@ -37,7 +37,15 @@ pub fn run() {
             let app_handle = app.handle().clone();
 
             let data_dir = app.path().app_local_data_dir()?;
-            migrate_legacy_data_dir(&data_dir);
+            migrate_legacy_dir(&data_dir);
+            // WKWebView keeps its data under ~/Library/WebKit/<bundle identifier>.
+            #[cfg(target_os = "macos")]
+            migrate_legacy_dir(
+                &app.path()
+                    .home_dir()?
+                    .join("Library/WebKit")
+                    .join(&app.config().identifier),
+            );
 
             let window = WebviewWindowBuilder::from_config(app.handle(), window_config)?
                 // macOS ignores this override; WKWebView persists by bundle identifier.
@@ -158,17 +166,16 @@ pub fn run() {
         });
 }
 
-/// Keeps the WhatsApp session from builds made before the app identifier was renamed.
-fn migrate_legacy_data_dir(data_dir: &std::path::Path) {
+/// Keeps the WhatsApp session from builds made before the app identifier was renamed:
+/// moves the sibling folder named after the old identifier to `dir`.
+fn migrate_legacy_dir(dir: &std::path::Path) {
     const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
 
-    if let Some(legacy) = data_dir
-        .parent()
-        .map(|parent| parent.join(LEGACY_IDENTIFIER))
+    if let Some(legacy) = dir.parent().map(|parent| parent.join(LEGACY_IDENTIFIER))
         && legacy.is_dir()
-        && !data_dir.exists()
+        && !dir.exists()
     {
-        let _ = std::fs::rename(legacy, data_dir);
+        let _ = std::fs::rename(legacy, dir);
     }
 }
 

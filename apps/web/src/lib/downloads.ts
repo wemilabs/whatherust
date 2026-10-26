@@ -46,3 +46,22 @@ export function pickAssets(release: Pick<Release, 'assets'> | null): {
 		}
 	};
 }
+
+export function pickPrimary(
+	platform: Platform,
+	release: Pick<Release, 'assets'> | null
+): { asset: Asset; kind: 'setup' | 'dmg' | 'appimage' } | undefined {
+	const assets = pickAssets(release);
+
+	if (platform === 'windows' && assets.windows.setup) {
+		return { asset: assets.windows.setup, kind: 'setup' };
+	}
+	if (platform === 'macos' && assets.macos.dmg) {
+		return { asset: assets.macos.dmg, kind: 'dmg' };
+	}
+	if (platform === 'linux' && assets.linux.appimage) {
+		return { asset: assets.linux.appimage, kind: 'appimage' };
+	}
+
+	return undefined;
+}

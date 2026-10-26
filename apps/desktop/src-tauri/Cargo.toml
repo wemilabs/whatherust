@@ -2,6 +2,7 @@
 name = "whatherust"
 version = "0.1.0"
 description = "WhatheRust: a lightweight native webview wrapper for WhatsApp Web"
+license = "MIT"
 edition = "2024"
 
 [lib]

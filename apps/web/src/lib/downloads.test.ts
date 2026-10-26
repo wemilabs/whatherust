@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectPlatform, pickAssets } from './downloads';
+import { detectPlatform, pickAssets, pickPrimary } from './downloads';
 import type { Release } from './types';
 
 const release: Release = {
@@ -125,5 +125,27 @@ describe('pickAssets', () => {
 			macos: { dmg: undefined },
 			linux: { appimage: undefined, deb: undefined, rpm: undefined }
 		});
+	});
+});
+
+describe('pickPrimary', () => {
+	it.each([
+		['windows', 0, 'setup'],
+		['macos', 2, 'dmg'],
+		['linux', 3, 'appimage']
+	] as const)('selects the primary %s asset', (platform, assetIndex, kind) => {
+		expect(pickPrimary(platform, release)).toEqual({ asset: release.assets[assetIndex], kind });
+	});
+
+	it('returns undefined for unknown platforms', () => {
+		expect(pickPrimary('unknown', release)).toBeUndefined();
+	});
+
+	it('returns undefined when the platform primary asset is missing', () => {
+		expect(pickPrimary('windows', { assets: [release.assets[1]] })).toBeUndefined();
+	});
+
+	it('returns undefined for a null release', () => {
+		expect(pickPrimary('linux', null)).toBeUndefined();
 	});
 });

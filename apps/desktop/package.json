@@ -1,5 +1,6 @@
 {
   "name": "@whatherust/desktop",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "tauri": "tauri",

@@ -98,3 +98,7 @@ rsvg-convert -w 1024 -h 1024 icons/icon.svg -o /tmp/icon.png
 cargo tauri icon /tmp/icon.png -o icons
 rsvg-convert -w 44 -h 44 icons/tray-template.svg -o icons/tray-template.png
 ```
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).

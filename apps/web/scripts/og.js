@@ -36,7 +36,7 @@ for (const locale of locales) {
 		},
 		[
 			{ type: 'img', props: { src: logo, width: 300, height: 300 } },
-			h('div', { display: 'flex', flexDirection: 'column', flex: 1 }, [
+			h('div', { display: 'flex', flexDirection: 'column', width: 676 }, [
 				h('div', { fontSize: 76, fontWeight: 800, letterSpacing: -2 }, 'WhatheRust'),
 				h(
 					'div',

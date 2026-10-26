@@ -44,7 +44,13 @@
 					class="font-semibold text-wa-800 underline underline-offset-4 dark:text-wa-300"
 					>{m.openSource()}</a
 				>
-				· {m.licenseNone()}
+				·
+				<a
+					href={`${REPO_URL}/blob/main/LICENSE`}
+					rel="external"
+					class="font-semibold text-wa-800 underline underline-offset-4 dark:text-wa-300"
+					>{m.licenseMit()}</a
+				>
 			</p>
 			<div class="mt-8">
 				<Download latest={data.latest} />

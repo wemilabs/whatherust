@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use tauri::{
     AppHandle, Manager, WebviewWindowBuilder,
     menu::{Menu, MenuItem},
@@ -5,6 +7,8 @@ use tauri::{
     webview::NewWindowResponse,
 };
 use tauri_plugin_opener::OpenerExt;
+
+const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
 
 #[cfg(target_os = "linux")]
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
@@ -37,14 +41,13 @@ pub fn run() {
             let app_handle = app.handle().clone();
 
             let data_dir = app.path().app_local_data_dir()?;
-            migrate_legacy_dir(&data_dir);
-            // WKWebView keeps its data under ~/Library/WebKit/<bundle identifier>.
+            move_legacy(&data_dir.with_file_name(LEGACY_IDENTIFIER), &data_dir);
+
             #[cfg(target_os = "macos")]
-            migrate_legacy_dir(
-                &app.path()
-                    .home_dir()?
-                    .join("Library/WebKit")
-                    .join(&app.config().identifier),
+            migrate_legacy_webkit_data(
+                &app.path().home_dir()?.join("Library"),
+                &app.config().identifier,
+                &app.package_info().name,
             );
 
             let window = WebviewWindowBuilder::from_config(app.handle(), window_config)?
@@ -166,17 +169,72 @@ pub fn run() {
         });
 }
 
-/// Keeps the WhatsApp session from builds made before the app identifier was renamed:
-/// moves the sibling folder named after the old identifier to `dir`.
+/// Moves data left by builds made before the app identifier was renamed.
 /// Moved, not copied, on purpose: the same WhatsApp linked-device keys must never live in two apps.
-fn migrate_legacy_dir(dir: &std::path::Path) {
-    const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
+fn move_legacy(from: &Path, to: &Path) -> bool {
+    from.exists() && !to.exists() && std::fs::rename(from, to).is_ok()
+}
 
-    if let Some(legacy) = dir.parent().map(|parent| parent.join(LEGACY_IDENTIFIER))
-        && legacy.is_dir()
-        && !dir.exists()
-    {
-        let _ = std::fs::rename(legacy, dir);
+#[cfg(target_os = "macos")]
+fn migrate_legacy_webkit_data(library: &Path, identifier: &str, app_name: &str) {
+    let webkit = library.join("WebKit");
+    if !move_legacy(&webkit.join(LEGACY_IDENTIFIER), &webkit.join(identifier)) {
+        return;
+    }
+
+    let cookies = library.join("HTTPStorages");
+    move_legacy(
+        &cookies.join(format!("{LEGACY_IDENTIFIER}.binarycookies")),
+        &cookies.join(format!("{identifier}.binarycookies")),
+    );
+    move_legacy(&cookies.join(LEGACY_IDENTIFIER), &cookies.join(identifier));
+    move_webcrypto_master_key(identifier, app_name);
+}
+
+/// WebKit wraps stored CryptoKeys with this per-bundle-id keychain item; without it, moved IndexedDB keys cannot be unwrapped.
+#[cfg(target_os = "macos")]
+fn move_webcrypto_master_key(identifier: &str, app_name: &str) {
+    use core_foundation::data::CFData;
+    use security_framework::item::{
+        ItemAddOptions, ItemAddValue, ItemClass, ItemSearchOptions, Location, SearchResult,
+    };
+
+    let old_account = format!("com.apple.WebKit.WebCrypto.master+{LEGACY_IDENTIFIER}");
+    let mut old_search = ItemSearchOptions::new();
+    old_search
+        .class(ItemClass::generic_password())
+        .account(&old_account)
+        .load_data(true)
+        .limit(1);
+    let Ok(mut old_items) = old_search.search() else {
+        return;
+    };
+    let Some(SearchResult::Data(data)) = old_items.pop() else {
+        return;
+    };
+
+    let new_account = format!("com.apple.WebKit.WebCrypto.master+{identifier}");
+    let mut new_search = ItemSearchOptions::new();
+    new_search
+        .class(ItemClass::generic_password())
+        .account(&new_account);
+    let _ = new_search.delete();
+
+    let value = ItemAddValue::Data {
+        class: ItemClass::generic_password(),
+        data: CFData::from_buffer(&data),
+    };
+    let mut new_item = ItemAddOptions::new(value);
+    new_item
+        .set_account_name(&new_account)
+        .set_label(format!("{app_name} WebCrypto Master Key"))
+        .set_location(Location::DefaultFileKeychain);
+    if new_item.add().is_ok() {
+        let mut old_delete = ItemSearchOptions::new();
+        old_delete
+            .class(ItemClass::generic_password())
+            .account(&old_account);
+        let _ = old_delete.delete();
     }
 }
 

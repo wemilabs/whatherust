@@ -239,10 +239,7 @@
 <section id="comparison" aria-labelledby="comparison-title" class="border-t border-line">
 	<div class="px-4 py-16 sm:px-8 sm:py-20">
 		<p class="font-mono text-xs text-muted tabular-nums">03</p>
-		<h2 id="comparison-title" class="mt-5 text-[32px] sm:text-[40px]">
-			<span class="text-subtle">{m.compareLead()}</span>
-			<span class="block">{m.compareTitle()}</span>
-		</h2>
+		<h2 id="comparison-title" class="mt-5 text-[32px] sm:text-[40px]">{m.compareTitle()}</h2>
 		<p class="mt-5 max-w-3xl text-base leading-relaxed text-muted sm:text-lg">{m.compareIntro()}</p>
 
 		<div class="mt-10 space-y-10">

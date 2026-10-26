@@ -46,7 +46,6 @@
 			<div class="mt-8">
 				<Download latest={data.latest} />
 			</div>
-			<p class="mt-8 max-w-xl text-xs leading-relaxed text-muted">{m.disclaimer()}</p>
 		</div>
 		<div class="hidden justify-end lg:flex" aria-hidden="true">
 			<div

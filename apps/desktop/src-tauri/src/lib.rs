@@ -1,4 +1,9 @@
 use std::path::Path;
+use std::sync::{
+    Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::Duration;
 
 use tauri::{
     AppHandle, Manager, WebviewWindowBuilder,
@@ -6,11 +11,38 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::NewWindowResponse,
 };
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
+use tauri_plugin_dialog::{
+    DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult,
+};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 
 const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum UpdateCheck {
+    Automatic,
+    Manual,
+}
+
+#[derive(Default)]
+struct UpdateState {
+    busy: AtomicBool,
+    dismissed: Mutex<Option<String>>,
+}
+
+struct UpdateBusyGuard<'a>(&'a AtomicBool);
+
+impl Drop for UpdateBusyGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+fn should_prompt(kind: UpdateCheck, version: &str, dismissed: Option<&str>) -> bool {
+    kind == UpdateCheck::Manual || dismissed != Some(version)
+}
 
 #[cfg(target_os = "linux")]
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
@@ -35,6 +67,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            app.manage(UpdateState::default());
             let window_config = app
                 .config()
                 .app
@@ -45,7 +78,13 @@ pub fn run() {
             let app_handle = app.handle().clone();
 
             if !cfg!(debug_assertions) {
-                tauri::async_runtime::spawn(check_for_update(app.handle().clone()));
+                let update_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        check_for_update(update_handle.clone(), UpdateCheck::Automatic).await;
+                        tokio::time::sleep(UPDATE_CHECK_INTERVAL).await;
+                    }
+                });
             }
 
             let data_dir = app.path().app_local_data_dir()?;
@@ -123,8 +162,15 @@ pub fn run() {
             });
 
             let show_item = MenuItem::with_id(app, "show", "Show WhatheRust", true, None::<&str>)?;
+            let check_updates_item = MenuItem::with_id(
+                app,
+                "check_updates",
+                "Check for updates…",
+                true,
+                None::<&str>,
+            )?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let menu = Menu::with_items(app, &[&show_item, &check_updates_item, &quit_item])?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main")
                 .tooltip("WhatheRust")
@@ -147,6 +193,12 @@ pub fn run() {
                 })
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show_main_window(app),
+                    "check_updates" => {
+                        tauri::async_runtime::spawn(check_for_update(
+                            app.clone(),
+                            UpdateCheck::Manual,
+                        ));
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 });
@@ -181,11 +233,36 @@ pub fn run() {
         });
 }
 
-async fn check_for_update(app: AppHandle) {
-    async fn check(app: &AppHandle) -> tauri_plugin_updater::Result<()> {
+async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
+    let state = app.state::<UpdateState>();
+    if state.busy.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let _busy = UpdateBusyGuard(&state.busy);
+
+    async fn check(
+        app: &AppHandle,
+        state: &UpdateState,
+        kind: UpdateCheck,
+    ) -> tauri_plugin_updater::Result<()> {
         let Some(update) = app.updater()?.check().await? else {
+            if kind == UpdateCheck::Manual {
+                app.dialog()
+                    .message(format!(
+                        "WhatheRust {} is the latest version.",
+                        app.package_info().version
+                    ))
+                    .title("WhatheRust update")
+                    .kind(MessageDialogKind::Info)
+                    .show(|_| {});
+            }
             return Ok(());
         };
+        let version = update.version.clone();
+        if !should_prompt(kind, &version, state.dismissed.lock().unwrap().as_deref()) {
+            return Ok(());
+        }
+
         let (sender, receiver) = tokio::sync::oneshot::channel();
 
         app.dialog()
@@ -208,12 +285,23 @@ async fn check_for_update(app: AppHandle) {
         ) {
             update.download_and_install(|_, _| {}, || {}).await?;
             app.restart();
+        } else {
+            *state.dismissed.lock().unwrap() = Some(version);
         }
 
         Ok(())
     }
 
-    let _ = check(&app).await;
+    match check(&app, &state, kind).await {
+        Err(error) if kind == UpdateCheck::Manual => {
+            app.dialog()
+                .message(format!("Could not check for updates: {error}"))
+                .title("WhatheRust update")
+                .kind(MessageDialogKind::Error)
+                .show(|_| {});
+        }
+        _ => {}
+    }
 }
 
 /// Moves data left by builds made before the app identifier was renamed.
@@ -401,7 +489,27 @@ fn toggle_main_window(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::is_allowed_url;
+    use super::{UpdateCheck, is_allowed_url, should_prompt};
+
+    #[test]
+    fn should_prompt_respects_dismissed_version_for_automatic_checks() {
+        assert!(!should_prompt(
+            UpdateCheck::Automatic,
+            "2.0.0",
+            Some("2.0.0")
+        ));
+        assert!(should_prompt(
+            UpdateCheck::Automatic,
+            "2.0.0",
+            Some("1.9.0")
+        ));
+        assert!(should_prompt(UpdateCheck::Automatic, "2.0.0", None));
+    }
+
+    #[test]
+    fn should_prompt_always_prompts_for_manual_checks() {
+        assert!(should_prompt(UpdateCheck::Manual, "2.0.0", Some("2.0.0")));
+    }
 
     #[test]
     fn allows_only_https_whatsapp_and_internal_document_urls() {

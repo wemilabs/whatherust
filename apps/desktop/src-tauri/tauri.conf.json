@@ -20,6 +20,18 @@
         "center": true,
         "windowEffects": { "effects": ["mica"] },
         "create": false
+      },
+      {
+        "label": "settings",
+        "title": "WhatheRust Settings",
+        "url": "settings.html",
+        "width": 420,
+        "height": 320,
+        "resizable": false,
+        "maximizable": false,
+        "minimizable": false,
+        "center": true,
+        "create": false
       }
     ],
     "security": {

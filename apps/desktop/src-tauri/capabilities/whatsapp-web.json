@@ -7,6 +7,7 @@
     "urls": ["https://web.whatsapp.com"]
   },
   "permissions": [
+    "allow-notifications-enabled",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
     "notification:allow-notify"

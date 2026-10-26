@@ -2,15 +2,38 @@ use std::path::Path;
 
 use tauri::{
     AppHandle, Manager, WebviewWindowBuilder,
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::NewWindowResponse,
 };
+use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 
+mod settings;
+
 const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
+// The page only caches the Rust value; the hook re-reads it so page code can't override the setting.
+const NOTIFICATION_GATE: &str = r#"(() => {
+  const Polyfill = window.Notification;
+  if (typeof Polyfill !== "function") return;
+  let enabled = __NOTIFICATIONS_ENABLED__;
+  const sync = () =>
+    window.__TAURI_INTERNALS__
+      .invoke("notifications_enabled")
+      .then((value) => { enabled = value === true; })
+      .catch(() => {});
+  Object.defineProperty(window, "__whatherustSyncNotifications", { value: sync });
+  sync();
+  window.Notification = new Proxy(Polyfill, {
+    construct(target, args, newTarget) {
+      return enabled
+        ? Reflect.construct(target, args, newTarget)
+        : Object.create(target.prototype);
+    },
+  });
+})();"#;
 
 #[cfg(target_os = "linux")]
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
@@ -24,6 +47,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
+        .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -50,6 +74,35 @@ pub fn run() {
 
             let data_dir = app.path().app_local_data_dir()?;
             move_legacy(&data_dir.with_file_name(LEGACY_IDENTIFIER), &data_dir);
+            app.manage(settings::SettingsStore::load(
+                data_dir.join("settings.json"),
+            ));
+            let settings = app.state::<settings::SettingsStore>().get();
+            let start_on_login = settings.start_on_login;
+            let notification_gate = NOTIFICATION_GATE.replace(
+                "__NOTIFICATIONS_ENABLED__",
+                if settings.notifications_enabled {
+                    "true"
+                } else {
+                    "false"
+                },
+            );
+            if start_on_login {
+                // Re-register so a moved or updated app keeps starting at login.
+                if let Err(error) = settings::apply_autostart(app.handle(), true) {
+                    eprintln!("failed to reconcile autostart setting: {error}");
+                }
+            } else {
+                match app.autolaunch().is_enabled() {
+                    Ok(true) => {
+                        if let Err(error) = settings::apply_autostart(app.handle(), false) {
+                            eprintln!("failed to reconcile autostart setting: {error}");
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => eprintln!("failed to read autostart state: {error}"),
+                }
+            }
 
             #[cfg(target_os = "macos")]
             let migration_pending = !migrate_legacy_webkit_data(
@@ -62,6 +115,7 @@ pub fn run() {
             let builder = WebviewWindowBuilder::from_config(app.handle(), window_config)?
                 // macOS ignores this override; WKWebView persists by bundle identifier.
                 .data_directory(data_dir.join("webview"))
+                .initialization_script(&notification_gate)
                 // WhatsApp Web rejects or degrades WebKit user agents.
                 .user_agent(USER_AGENT)
                 .on_navigation({
@@ -113,8 +167,16 @@ pub fn run() {
             let close_window = window.clone();
             window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = close_window.hide();
+                    if close_window
+                        .state::<settings::SettingsStore>()
+                        .get()
+                        .close_to_tray
+                    {
+                        api.prevent_close();
+                        let _ = close_window.hide();
+                    } else {
+                        close_window.app_handle().exit(0);
+                    }
                 }
                 #[cfg(target_os = "macos")]
                 if let tauri::WindowEvent::ThemeChanged(theme) = event {
@@ -123,8 +185,12 @@ pub fn run() {
             });
 
             let show_item = MenuItem::with_id(app, "show", "Show WhatheRust", true, None::<&str>)?;
+            let settings_item =
+                MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+            let separator = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let menu =
+                Menu::with_items(app, &[&show_item, &settings_item, &separator, &quit_item])?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main")
                 .tooltip("WhatheRust")
@@ -147,6 +213,7 @@ pub fn run() {
                 })
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show_main_window(app),
+                    "settings" => open_settings_window(app),
                     "quit" => app.exit(0),
                     _ => {}
                 });
@@ -164,6 +231,11 @@ pub fn run() {
 
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            settings::get_settings,
+            settings::set_settings,
+            settings::notifications_enabled
+        ])
         .build(tauri::generate_context!())
         .expect("error while building WhatheRust")
         .run(|app, event| {
@@ -386,6 +458,42 @@ fn show_main_window(app: &AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+fn open_settings_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("settings") {
+        if let Err(error) = window.show() {
+            eprintln!("failed to show settings window: {error}");
+        }
+        if let Err(error) = window.unminimize() {
+            eprintln!("failed to unminimize settings window: {error}");
+        }
+        if let Err(error) = window.set_focus() {
+            eprintln!("failed to focus settings window: {error}");
+        }
+        return;
+    }
+
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == "settings")
+    else {
+        eprintln!("missing settings window configuration");
+        return;
+    };
+
+    match WebviewWindowBuilder::from_config(app, config).and_then(|builder| builder.build()) {
+        Ok(window) => {
+            #[cfg(target_os = "windows")]
+            round_corners(&window);
+            #[cfg(not(target_os = "windows"))]
+            let _ = window;
+        }
+        Err(error) => eprintln!("failed to create settings window: {error}"),
     }
 }
 

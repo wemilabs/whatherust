@@ -50,7 +50,7 @@
 	"featureLookTitle": "Looks at home on each OS",
 	"featureLookBody": "Mica and rounded corners on Windows 11, and a title bar tinted to match WhatsApp on macOS.",
 	"featureUpdatesTitle": "Signed auto-updates",
-	"featureUpdatesBody": "The app checks GitHub Releases on launch and asks before installing a signed update.",
+	"featureUpdatesBody": "Checks GitHub Releases on launch, every six hours, or from the tray—and asks before installing a signed update.",
 	"screenshotsLead": "Same experience,",
 	"screenshotsTitle": "but way faster",
 	"screenshotsIntro": "Running on Ubuntu 22.04. The QR code is blurred.",

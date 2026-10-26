@@ -50,7 +50,7 @@
 	"featureLookTitle": "À sa place sur chaque OS",
 	"featureLookBody": "Mica et coins arrondis sous Windows 11, barre de titre teintée comme WhatsApp sous macOS.",
 	"featureUpdatesTitle": "Mises à jour signées",
-	"featureUpdatesBody": "Au lancement, l’app vérifie GitHub Releases et vous demande avant d’installer une mise à jour signée.",
+	"featureUpdatesBody": "L’app vérifie GitHub Releases au lancement, toutes les six heures ou depuis le menu de la barre d’état, et vous demande avant d’installer une mise à jour signée.",
 	"screenshotsLead": "La même expérience,",
 	"screenshotsTitle": "en bien plus rapide",
 	"screenshotsIntro": "Sous Ubuntu 22.04. Le QR code est flouté.",

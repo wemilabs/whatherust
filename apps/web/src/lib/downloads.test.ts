@@ -184,8 +184,12 @@ describe('pickPrimary', () => {
 		});
 	});
 
-	it('selects DEB before RPM when AppImage is missing', () => {
-		expect(pickPrimary('linux', { assets: [release.assets[5], release.assets[6]] })).toEqual({
+	it('returns undefined when both DEB and RPM are available without AppImage', () => {
+		expect(pickPrimary('linux', { assets: [release.assets[5], release.assets[6]] })).toBeUndefined();
+	});
+
+	it('selects DEB when it is the only non-AppImage Linux asset', () => {
+		expect(pickPrimary('linux', { assets: [release.assets[5]] })).toEqual({
 			asset: release.assets[5],
 			kind: 'deb'
 		});

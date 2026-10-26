@@ -75,8 +75,12 @@ export function pickPrimary(
 
 	if (platform === 'linux') {
 		if (assets.linux.appimage) return { asset: assets.linux.appimage, kind: 'appimage' };
-		if (assets.linux.deb) return { asset: assets.linux.deb, kind: 'deb' };
-		if (assets.linux.rpm) return { asset: assets.linux.rpm, kind: 'rpm' };
+		if (assets.linux.deb && !assets.linux.rpm) {
+			return { asset: assets.linux.deb, kind: 'deb' };
+		}
+		if (assets.linux.rpm && !assets.linux.deb) {
+			return { asset: assets.linux.rpm, kind: 'rpm' };
+		}
 	}
 
 	return undefined;

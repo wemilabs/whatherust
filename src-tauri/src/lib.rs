@@ -66,6 +66,9 @@ pub fn run() {
                 })
                 .build()?;
 
+            #[cfg(target_os = "windows")]
+            round_corners(&window);
+
             #[cfg(target_os = "macos")]
             window.set_background_color(Some(titlebar_color(window.theme()?)))?;
 
@@ -150,6 +153,25 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);
         });
+}
+
+#[cfg(target_os = "windows")]
+fn round_corners(window: &tauri::WebviewWindow) {
+    use windows::Win32::Graphics::Dwm::{
+        DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND, DwmSetWindowAttribute,
+    };
+
+    let Ok(hwnd) = window.hwnd() else { return };
+    let preference = DWMWCP_ROUND;
+    // Windows 11 only; older versions reject the attribute, which is fine.
+    let _ = unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            (&raw const preference).cast(),
+            size_of_val(&preference) as u32,
+        )
+    };
 }
 
 #[cfg(target_os = "macos")]

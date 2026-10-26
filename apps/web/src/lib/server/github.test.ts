@@ -68,6 +68,8 @@ describe('getReleases', () => {
 		const releases = await getReleases(fetcher, { all: true });
 
 		expect(calls.map((call) => call.url)).toEqual([`${apiUrl}?per_page=100`, nextPageUrl]);
+		expect(calls[0].init?.redirect).toBeUndefined();
+		expect(calls[1].init?.redirect).toBe('error');
 		expect(releases.map((release) => release.tag)).toEqual(['v0.2.0', 'v0.1.0']);
 	});
 
@@ -85,7 +87,9 @@ describe('getReleases', () => {
 		const { fetcher, calls } = makeFetcher([
 			{
 				body: [githubRelease('v0.1.0')],
-				headers: { Link: '<https://example.com/releases?page=2>; rel="next"' }
+				headers: {
+					Link: '<https://api.github.com.evil.example/releases?page=2>; rel="next"'
+				}
 			}
 		]);
 

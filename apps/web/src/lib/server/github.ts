@@ -30,10 +30,11 @@ function headers(): Record<string, string> {
 
 async function request<T>(
 	url: string,
-	fetcher: typeof fetch
+	fetcher: typeof fetch,
+	init?: RequestInit
 ): Promise<{ data: T; headers: Headers } | null> {
 	try {
-		const response = await fetcher(url, { headers: headers() });
+		const response = await fetcher(url, { ...init, headers: headers() });
 		if (!response.ok) return null;
 		return { data: (await response.json()) as T, headers: response.headers };
 	} catch {
@@ -62,6 +63,14 @@ function nextPage(headers: Headers): string | null {
 	return null;
 }
 
+function isApiPage(url: string): boolean {
+	try {
+		return new URL(url).origin === new URL(API_URL).origin;
+	} catch {
+		return false;
+	}
+}
+
 export async function getReleases(
 	fetcher: typeof fetch,
 	{ all = false }: { all?: boolean } = {}
@@ -77,8 +86,10 @@ export async function getReleases(
 	if (all) {
 		let next = nextPage(response.headers);
 		for (let page = 1; page < 10 && next; page += 1) {
-			if (!next.startsWith(`${API_URL}/`)) break;
-			const nextResponse = await request<GitHubRelease[]>(next, fetcher);
+			if (!isApiPage(next)) break;
+			const nextResponse = await request<GitHubRelease[]>(next, fetcher, {
+				redirect: 'error'
+			});
 			if (!nextResponse || !Array.isArray(nextResponse.data)) break;
 			releases.push(...nextResponse.data);
 			next = nextPage(nextResponse.headers);

@@ -50,17 +50,22 @@ export function pickAssets(release: Pick<Release, 'assets'> | null): {
 export function pickPrimary(
 	platform: Platform,
 	release: Pick<Release, 'assets'> | null
-): { asset: Asset; kind: 'setup' | 'dmg' | 'appimage' } | undefined {
+): { asset: Asset; kind: 'setup' | 'msi' | 'dmg' | 'appimage' | 'deb' | 'rpm' } | undefined {
 	const assets = pickAssets(release);
 
-	if (platform === 'windows' && assets.windows.setup) {
-		return { asset: assets.windows.setup, kind: 'setup' };
+	if (platform === 'windows') {
+		if (assets.windows.setup) return { asset: assets.windows.setup, kind: 'setup' };
+		if (assets.windows.msi) return { asset: assets.windows.msi, kind: 'msi' };
 	}
+
 	if (platform === 'macos' && assets.macos.dmg) {
 		return { asset: assets.macos.dmg, kind: 'dmg' };
 	}
-	if (platform === 'linux' && assets.linux.appimage) {
-		return { asset: assets.linux.appimage, kind: 'appimage' };
+
+	if (platform === 'linux') {
+		if (assets.linux.appimage) return { asset: assets.linux.appimage, kind: 'appimage' };
+		if (assets.linux.deb) return { asset: assets.linux.deb, kind: 'deb' };
+		if (assets.linux.rpm) return { asset: assets.linux.rpm, kind: 'rpm' };
 	}
 
 	return undefined;

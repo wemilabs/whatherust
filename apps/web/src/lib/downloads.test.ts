@@ -148,4 +148,25 @@ describe('pickPrimary', () => {
 	it('returns undefined for a null release', () => {
 		expect(pickPrimary('linux', null)).toBeUndefined();
 	});
+
+	it('falls back to MSI when the Windows setup asset is missing', () => {
+		expect(pickPrimary('windows', { assets: [release.assets[1]] })).toEqual({
+			asset: release.assets[1],
+			kind: 'msi'
+		});
+	});
+
+	it('selects DEB before RPM when AppImage is missing', () => {
+		expect(pickPrimary('linux', { assets: [release.assets[5], release.assets[6]] })).toEqual({
+			asset: release.assets[5],
+			kind: 'deb'
+		});
+	});
+
+	it('falls back to RPM when AppImage and DEB are missing', () => {
+		expect(pickPrimary('linux', { assets: [release.assets[6]] })).toEqual({
+			asset: release.assets[6],
+			kind: 'rpm'
+		});
+	});
 });

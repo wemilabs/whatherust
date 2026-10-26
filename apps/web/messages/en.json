@@ -2,7 +2,7 @@
 	"$schema": "https://inlang.com/schema/inlang-message-format",
 	"siteName": "WhatheRust",
 	"metaTitle": "WhatheRust: a lightweight WhatsApp desktop app built with Rust",
-	"metaDescription": "An unofficial, open-source WhatsApp desktop client for Windows, macOS and Linux. Built with Rust and Tauri, it uses your system's webview instead of bundling a browser.",
+	"metaDescription": "Open-source WhatsApp desktop client for Windows, macOS and Linux.",
 	"skipToContent": "Skip to content",
 	"navChangelog": "Changelog",
 	"githubStars": "WhatheRust on GitHub, {stars} stars",

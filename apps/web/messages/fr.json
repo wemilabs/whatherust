@@ -2,7 +2,7 @@
 	"$schema": "https://inlang.com/schema/inlang-message-format",
 	"siteName": "WhatheRust",
 	"metaTitle": "WhatheRust : une application WhatsApp légère pour ordinateur, écrite en Rust",
-	"metaDescription": "Un client WhatsApp non officiel et open source pour Windows, macOS et Linux. Écrit en Rust avec Tauri, il utilise la webview de votre système au lieu d’embarquer un navigateur.",
+	"metaDescription": "Client WhatsApp de bureau open source pour Windows, macOS et Linux.",
 	"skipToContent": "Aller au contenu",
 	"navChangelog": "Nouveautés",
 	"githubStars": "WhatheRust sur GitHub, {stars} étoiles",

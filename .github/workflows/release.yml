@@ -78,25 +78,25 @@ jobs:
           temp_dir="$(mktemp -d)"
           trap 'rm -rf "$temp_dir"' EXIT
 
-          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p '*-setup.exe' -D "$temp_dir"
-          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p '*_universal.dmg' -D "$temp_dir"
-          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p '*.AppImage' -D "$temp_dir"
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p 'WhatheRust_*-setup.exe' -D "$temp_dir"
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p 'WhatheRust_*_universal.dmg' -D "$temp_dir"
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p 'WhatheRust_*.AppImage' -D "$temp_dir"
 
           shopt -s nullglob
-          setup_assets=("$temp_dir"/*-setup.exe)
-          dmg_assets=("$temp_dir"/*_universal.dmg)
-          appimage_assets=("$temp_dir"/*.AppImage)
+          setup_assets=("$temp_dir"/WhatheRust_*-setup.exe)
+          dmg_assets=("$temp_dir"/WhatheRust_*_universal.dmg)
+          appimage_assets=("$temp_dir"/WhatheRust_*.AppImage)
 
           if (( ${#setup_assets[@]} != 1 )); then
-            echo "::error::Expected exactly one *-setup.exe asset; found ${#setup_assets[@]}"
+            echo "::error::Expected exactly one WhatheRust_*-setup.exe asset; found ${#setup_assets[@]}"
             exit 1
           fi
           if (( ${#dmg_assets[@]} != 1 )); then
-            echo "::error::Expected exactly one *_universal.dmg asset; found ${#dmg_assets[@]}"
+            echo "::error::Expected exactly one WhatheRust_*_universal.dmg asset; found ${#dmg_assets[@]}"
             exit 1
           fi
           if (( ${#appimage_assets[@]} != 1 )); then
-            echo "::error::Expected exactly one *.AppImage asset; found ${#appimage_assets[@]}"
+            echo "::error::Expected exactly one WhatheRust_*.AppImage asset; found ${#appimage_assets[@]}"
             exit 1
           fi
 

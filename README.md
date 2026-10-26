@@ -74,6 +74,7 @@ Alternatively, run `cargo tauri dev` from `apps/desktop/src-tauri`. Bundles are 
 Release builds check GitHub Releases for updates on launch. Updates are signed with the updater
 key; configure the `TAURI_SIGNING_PRIVATE_KEY` repository secret for release builds. Push a `vX.Y.Z`
 tag to create a draft release, which is published after all platform builds succeed.
+The app version is taken from the tag, so use `vX.Y.Z` with valid SemVer.
 
 ## Website
 

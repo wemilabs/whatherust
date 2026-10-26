@@ -44,14 +44,14 @@ pub fn run() {
             move_legacy(&data_dir.with_file_name(LEGACY_IDENTIFIER), &data_dir);
 
             #[cfg(target_os = "macos")]
-            migrate_legacy_webkit_data(
+            let migration_pending = !migrate_legacy_webkit_data(
                 &data_dir,
                 &app.path().home_dir()?.join("Library"),
                 &app.config().identifier,
                 &app.package_info().name,
             );
 
-            let window = WebviewWindowBuilder::from_config(app.handle(), window_config)?
+            let builder = WebviewWindowBuilder::from_config(app.handle(), window_config)?
                 // macOS ignores this override; WKWebView persists by bundle identifier.
                 .data_directory(data_dir.join("webview"))
                 // WhatsApp Web rejects or degrades WebKit user agents.
@@ -78,8 +78,11 @@ pub fn run() {
                     if let Some(tray) = webview.app_handle().tray_by_id("main") {
                         let _ = tray.set_tooltip(Some(title.replace("WhatsApp", "WhatheRust")));
                     }
-                })
-                .build()?;
+                });
+            // Invariant: any launch without the migration marker is incognito, so wiping the leftover new store never destroys a real session.
+            #[cfg(target_os = "macos")]
+            let builder = builder.incognito(migration_pending);
+            let window = builder.build()?;
 
             #[cfg(target_os = "windows")]
             round_corners(&window);
@@ -177,7 +180,12 @@ fn move_legacy(from: &Path, to: &Path) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn migrate_legacy_webkit_data(data_dir: &Path, library: &Path, identifier: &str, app_name: &str) {
+fn migrate_legacy_webkit_data(
+    data_dir: &Path,
+    library: &Path,
+    identifier: &str,
+    app_name: &str,
+) -> bool {
     // Once set, a legacy folder recreated by the old app must never replace this app's session.
     let marker = data_dir.join(".legacy-migrated");
     let mark_migrated = || {
@@ -185,25 +193,25 @@ fn migrate_legacy_webkit_data(data_dir: &Path, library: &Path, identifier: &str,
         let _ = std::fs::File::create(&marker);
     };
     if marker.exists() {
-        return;
+        return true;
     }
     let webkit = library.join("WebKit");
     let cookies = library.join("HTTPStorages");
     let legacy = webkit.join(LEGACY_IDENTIFIER);
     if !legacy.exists() {
         mark_migrated();
-        return;
+        return true;
     }
-    // Move the key first; discard leftover new stores only after success so denied prompts retry next launch.
-    if !move_webcrypto_master_key(identifier, app_name) {
-        return;
+    // Copy the key first; discard leftover new stores only after success so denied prompts retry next launch.
+    if !copy_webcrypto_master_key(identifier, app_name) {
+        return false;
     }
     let current = webkit.join(identifier);
     let _ = std::fs::remove_dir_all(&current);
     let _ = std::fs::remove_file(cookies.join(format!("{identifier}.binarycookies")));
     let _ = std::fs::remove_dir_all(cookies.join(identifier));
     if !move_legacy(&legacy, &current) {
-        return;
+        return false;
     }
     mark_migrated();
 
@@ -212,11 +220,13 @@ fn migrate_legacy_webkit_data(data_dir: &Path, library: &Path, identifier: &str,
         &cookies.join(format!("{identifier}.binarycookies")),
     );
     move_legacy(&cookies.join(LEGACY_IDENTIFIER), &cookies.join(identifier));
+    delete_legacy_webcrypto_master_key();
+    true
 }
 
 /// WebKit wraps stored CryptoKeys with this per-bundle-id item; moved IndexedDB keys need it to be unwrapped.
 #[cfg(target_os = "macos")]
-fn move_webcrypto_master_key(identifier: &str, app_name: &str) -> bool {
+fn copy_webcrypto_master_key(identifier: &str, app_name: &str) -> bool {
     use core_foundation::data::CFData;
     use security_framework::item::{
         ItemAddOptions, ItemAddValue, ItemClass, ItemSearchOptions, Location, SearchResult,
@@ -224,7 +234,7 @@ fn move_webcrypto_master_key(identifier: &str, app_name: &str) -> bool {
 
     const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
-    let old_account = format!("com.apple.WebKit.WebCrypto.master+{LEGACY_IDENTIFIER}");
+    let old_account = legacy_webcrypto_account();
     let mut old_search = ItemSearchOptions::new();
     old_search
         .class(ItemClass::generic_password())
@@ -258,17 +268,24 @@ fn move_webcrypto_master_key(identifier: &str, app_name: &str) -> bool {
         .set_account_name(&new_account)
         .set_label(format!("{app_name} WebCrypto Master Key"))
         .set_location(Location::DefaultFileKeychain);
-    if new_item.add().is_err() {
-        return false;
-    }
+    new_item.add().is_ok()
+}
+
+#[cfg(target_os = "macos")]
+fn legacy_webcrypto_account() -> String {
+    format!("com.apple.WebKit.WebCrypto.master+{LEGACY_IDENTIFIER}")
+}
+
+/// Best effort: another signer's item can refuse deletion (errSecInvalidOwnerEdit); the keys it wraps moved with the folder.
+#[cfg(target_os = "macos")]
+fn delete_legacy_webcrypto_master_key() {
+    use security_framework::item::{ItemClass, ItemSearchOptions};
 
     let mut old_delete = ItemSearchOptions::new();
     old_delete
         .class(ItemClass::generic_password())
-        .account(&old_account);
-    // Best effort: another signer's item can refuse deletion (errSecInvalidOwnerEdit); the keys it wraps moved with the folder.
+        .account(&legacy_webcrypto_account());
     let _ = old_delete.delete();
-    true
 }
 
 #[cfg(target_os = "windows")]

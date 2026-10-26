@@ -108,8 +108,12 @@ pub fn run() {
 }
 
 fn is_allowed_url(url: &tauri::Url) -> bool {
-    if !matches!(url.scheme(), "http" | "https") {
+    if matches!(url.scheme(), "blob" | "data" | "about") {
         return true;
+    }
+
+    if url.scheme() != "https" {
+        return false;
     }
 
     url.host_str().is_some_and(|host| {
@@ -140,6 +144,33 @@ fn toggle_main_window(app: &AppHandle) {
             let _ = window.hide();
         } else {
             show_main_window(app);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_allowed_url;
+
+    #[test]
+    fn allows_only_https_whatsapp_and_internal_document_urls() {
+        let cases = [
+            ("https://web.whatsapp.com/", true),
+            ("https://static.whatsapp.net/x", true),
+            ("http://web.whatsapp.com/", false),
+            ("mailto:a@b.c", false),
+            ("https://evil-whatsapp.com/", false),
+            ("https://example.com", false),
+            ("blob:https://web.whatsapp.com/uuid", true),
+            ("about:blank", true),
+        ];
+
+        for (url, expected) in cases {
+            assert_eq!(
+                is_allowed_url(&tauri::Url::parse(url).unwrap()),
+                expected,
+                "{url}"
+            );
         }
     }
 }

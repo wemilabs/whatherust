@@ -87,17 +87,6 @@
 			]
 		}
 	]);
-
-	const sources = [
-		{
-			label: 'Windows Latest, 21 Jul 2025',
-			href: 'https://www.windowslatest.com/2025/07/21/whatsapp-for-windows-11-is-switching-back-to-chromium-web-wrapper-from-uwp-native/'
-		},
-		{
-			label: 'Daring Fireball, 15 Nov 2025',
-			href: 'https://daringfireball.net/2025/11/meta_whatsapp_windows_shitty_web_app'
-		}
-	];
 </script>
 
 <section id="comparison" aria-labelledby="comparison-title" class="border-t border-line">
@@ -151,16 +140,25 @@
 		</div>
 
 		<p class="mt-8 max-w-3xl text-sm leading-relaxed text-muted">
-			{m.compareOfficial()}
-			{m.compareSources()}
-			{#each sources as source, index (source.href)}
-				<a
-					href={source.href}
-					rel="external"
-					class="text-rust-700 underline decoration-transparent underline-offset-4 hover:decoration-current dark:text-rust-400"
-					>{source.label}</a
-				>{index < sources.length - 1 ? ', ' : '.'}
-			{/each}
+			{m.compareOfficialIntro()}
+			<a
+				href="https://x.com/mthlish/status/2114650982663758226"
+				rel="external"
+				class="text-rust-700 underline decoration-transparent underline-offset-4 hover:decoration-current dark:text-rust-400"
+				>{m.compareOfficialSourceX()}</a
+			>,
+			<a
+				href="https://www.windowslatest.com/2025/07/21/whatsapp-for-windows-11-is-switching-back-to-chromium-web-wrapper-from-uwp-native/"
+				rel="external"
+				class="text-rust-700 underline decoration-transparent underline-offset-4 hover:decoration-current dark:text-rust-400"
+				>{m.compareOfficialSourceWindowsLatest()}</a
+			>,
+			<a
+				href="https://daringfireball.net/2025/11/meta_whatsapp_windows_shitty_web_app"
+				rel="external"
+				class="text-rust-700 underline decoration-transparent underline-offset-4 hover:decoration-current dark:text-rust-400"
+				>{m.compareOfficialSourceDaringFireball()}</a
+			>.
 		</p>
 	</div>
 </section>

@@ -15,6 +15,7 @@ Tauri uses WebView2, WKWebView, or WebKitGTK provided by the operating system ra
 - Persistent session data at `<app local data dir>/webview` (for example, `~/.local/share/com.wemilabs.whatherust/webview` on Linux).
 - Desktop Chrome user agent for compatibility with WhatsApp Web.
 - System tray with show/quit actions, close-to-tray behavior, and the unread count in the tray tooltip.
+- A tray Settings window for startup, close behavior, and notification preferences.
 - Native notifications through Tauri's notification plugin.
 - External links open in the system browser.
 - Single-instance behavior.

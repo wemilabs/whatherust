@@ -67,6 +67,9 @@ pub fn run() {
                 .build()?;
 
             #[cfg(target_os = "macos")]
+            window.set_background_color(Some(titlebar_color(window.theme()?)))?;
+
+            #[cfg(target_os = "macos")]
             window.with_webview(|webview| {
                 // Let WebKit dispatch target=_blank; on_new_window still opens URLs externally.
                 unsafe {
@@ -83,6 +86,10 @@ pub fn run() {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = close_window.hide();
+                }
+                #[cfg(target_os = "macos")]
+                if let tauri::WindowEvent::ThemeChanged(theme) = event {
+                    let _ = close_window.set_background_color(Some(titlebar_color(*theme)));
                 }
             });
 
@@ -114,6 +121,13 @@ pub fn run() {
                     "quit" => app.exit(0),
                     _ => {}
                 });
+            #[cfg(target_os = "macos")]
+            {
+                tray_builder = tray_builder
+                    .icon(tauri::include_image!("icons/tray-template.png"))
+                    .icon_as_template(true);
+            }
+            #[cfg(not(target_os = "macos"))]
             if let Some(icon) = app.default_window_icon() {
                 tray_builder = tray_builder.icon(icon.clone());
             }
@@ -121,8 +135,29 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running WhatsApp");
+        .build(tauri::generate_context!())
+        .expect("error while building WhatsApp")
+        .run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } = event
+            {
+                show_main_window(app);
+            }
+
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        });
+}
+
+#[cfg(target_os = "macos")]
+fn titlebar_color(theme: tauri::Theme) -> tauri::window::Color {
+    match theme {
+        tauri::Theme::Dark => tauri::window::Color(29, 31, 31, 255),
+        _ => tauri::window::Color(247, 245, 243, 255),
+    }
 }
 
 fn is_allowed_url(url: &tauri::Url) -> bool {

@@ -11,6 +11,7 @@
       {
         "label": "main",
         "title": "WhatsApp",
+        "titleBarStyle": "Transparent",
         "url": "https://web.whatsapp.com",
         "width": 1200,
         "height": 800,

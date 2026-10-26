@@ -70,17 +70,22 @@ pub fn run() {
             app.manage(settings::SettingsStore::load(
                 data_dir.join("settings.json"),
             ));
-            let configured_autostart = app.state::<settings::SettingsStore>().get().start_on_login;
-            match app.autolaunch().is_enabled() {
-                Ok(enabled) if enabled != configured_autostart => {
-                    if let Err(error) =
-                        settings::apply_autostart(app.handle(), configured_autostart)
-                    {
-                        eprintln!("failed to reconcile autostart setting: {error}");
-                    }
+            let start_on_login = app.state::<settings::SettingsStore>().get().start_on_login;
+            if start_on_login {
+                // Re-register so a moved or updated app keeps starting at login.
+                if let Err(error) = settings::apply_autostart(app.handle(), true) {
+                    eprintln!("failed to reconcile autostart setting: {error}");
                 }
-                Ok(_) => {}
-                Err(error) => eprintln!("failed to read autostart state: {error}"),
+            } else {
+                match app.autolaunch().is_enabled() {
+                    Ok(true) => {
+                        if let Err(error) = settings::apply_autostart(app.handle(), false) {
+                            eprintln!("failed to reconcile autostart setting: {error}");
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => eprintln!("failed to read autostart state: {error}"),
+                }
             }
 
             #[cfg(target_os = "macos")]

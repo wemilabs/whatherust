@@ -39,7 +39,7 @@
 <button
 	type="button"
 	onclick={toggle}
-	class="inline-flex size-10 items-center justify-center rounded-lg text-stone-700 transition-colors hover:bg-stone-200/70 dark:text-stone-300 dark:hover:bg-stone-800"
+	class="inline-flex size-9 items-center justify-center rounded-full text-fg transition-colors hover:bg-black/5 dark:hover:bg-white/[0.06]"
 	aria-label={dark ? m.themeToLight() : m.themeToDark()}
 	title={dark ? m.themeToLight() : m.themeToDark()}
 >

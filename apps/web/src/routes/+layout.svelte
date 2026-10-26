@@ -44,12 +44,12 @@
 
 <a
 	href="#main"
-	class="sr-only z-30 rounded-lg bg-stone-900 px-4 py-2 text-white focus:not-sr-only focus:fixed focus:top-3 focus:left-3 dark:bg-white dark:text-stone-900"
+	class="sr-only z-30 rounded-lg bg-fg px-4 py-2 text-bg focus:not-sr-only focus:fixed focus:top-3 focus:left-3"
 >
 	{m.skipToContent()}
 </a>
 <Header stars={data.stars} />
-<main id="main">
+<main id="main" class="mx-auto max-w-6xl sm:border-x sm:border-line">
 	{@render children()}
 </main>
 <Footer />

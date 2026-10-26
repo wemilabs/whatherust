@@ -30,22 +30,27 @@ for (const locale of locales) {
 			alignItems: 'center',
 			gap: 64,
 			padding: 80,
-			background: 'linear-gradient(135deg, #1c1917 0%, #0c0a09 60%, #2a1208 100%)',
-			color: '#fafaf9',
+			background: '#f7f7f7',
+			color: '#191919',
 			fontFamily: 'Geist'
 		},
 		[
 			{ type: 'img', props: { src: logo, width: 300, height: 300 } },
 			h('div', { display: 'flex', flexDirection: 'column', width: 676 }, [
-				h('div', { fontSize: 76, fontWeight: 800, letterSpacing: -2 }, 'WhatheRust'),
 				h(
 					'div',
-					{ fontSize: 38, lineHeight: 1.25, marginTop: 20, color: '#e7e5e4' },
-					messages.heroTitle
+					{ fontSize: 76, fontWeight: 400, letterSpacing: -2, color: '#8a8a8a' },
+					'WhatheRust'
 				),
 				h(
 					'div',
-					{ fontSize: 26, marginTop: 36, color: '#25d366', fontWeight: 800 },
+					{ fontSize: 38, lineHeight: 1.15, marginTop: 20, color: '#8a8a8a' },
+					messages.ogTitleLead
+				),
+				h('div', { fontSize: 38, lineHeight: 1.15, color: '#191919' }, messages.ogTitle),
+				h(
+					'div',
+					{ fontSize: 26, marginTop: 36, color: '#c2410c', fontWeight: 800 },
 					'Rust + Tauri · Windows · macOS · Linux'
 				)
 			])

@@ -36,25 +36,23 @@
 	]);
 </script>
 
-<section
-	id="features"
-	aria-labelledby="features-title"
-	class="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20"
->
-	<h2 id="features-title" class="text-3xl font-bold tracking-tight sm:text-4xl">
-		{m.featuresTitle()}
-	</h2>
-	<p class="mt-3 text-stone-600 dark:text-stone-400">{m.featuresIntro()}</p>
-	<ul class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-		{#each features as feature (feature.title)}
-			<li
-				class="rounded-2xl border border-stone-200 bg-white p-6 dark:border-stone-800 dark:bg-stone-900"
-			>
-				<span
-					class="inline-flex size-10 items-center justify-center rounded-xl bg-rust-50 text-rust-700 dark:bg-rust-400/15 dark:text-rust-400"
-				>
+<section id="features" aria-labelledby="features-title" class="border-t border-line">
+	<div class="px-4 py-16 sm:px-8 sm:py-20">
+		<p class="font-mono text-xs text-muted tabular-nums">01</p>
+		<h2 id="features-title" class="mt-5 text-[32px] sm:text-[40px]">
+			<span class="text-subtle">{m.featuresLead()}</span>
+			<span class="block">{m.featuresTitle()}</span>
+		</h2>
+		<p class="mt-5 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">
+			{m.featuresIntro()}
+		</p>
+		<ul
+			class="-mx-4 mt-10 grid gap-px border-y border-line bg-line sm:-mx-8 sm:grid-cols-2 lg:grid-cols-3"
+		>
+			{#each features as feature (feature.title)}
+				<li class="bg-bg p-6 sm:p-8">
 					<svg
-						class="size-5"
+						class="size-5 text-rust-700 dark:text-rust-400"
 						viewBox="0 0 24 24"
 						fill="none"
 						stroke="currentColor"
@@ -65,12 +63,10 @@
 					>
 						<path d={feature.icon} />
 					</svg>
-				</span>
-				<h3 class="mt-4 font-semibold">{feature.title}</h3>
-				<p class="mt-1.5 text-sm leading-relaxed text-stone-600 dark:text-stone-400">
-					{feature.body}
-				</p>
-			</li>
-		{/each}
-	</ul>
+					<h3 class="mt-5 text-[18px]">{feature.title}</h3>
+					<p class="mt-2 text-base leading-relaxed text-muted">{feature.body}</p>
+				</li>
+			{/each}
+		</ul>
+	</div>
 </section>

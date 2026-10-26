@@ -8,6 +8,7 @@
 		STABLE_DOWNLOADS,
 		type Platform
 	} from '#lib/downloads.js';
+	import { REPO_URL } from '#lib/site.js';
 	import type { Release } from '#lib/types.js';
 
 	type DownloadOption = {
@@ -86,13 +87,13 @@
 	}
 </script>
 
-<div class="flex flex-col items-center gap-3 sm:items-start">
+<div class="flex flex-col items-start gap-4">
 	{#if latest === undefined && platform !== 'unknown'}
 		<a
 			href={STABLE_DOWNLOADS[platform]}
 			download
 			rel="external"
-			class="inline-flex min-h-12 items-center gap-2 rounded-xl bg-wa-700 px-6 py-3 text-base font-semibold text-white shadow-sm transition-colors hover:bg-wa-800"
+			class="inline-flex h-12 items-center gap-2 rounded-full bg-fg px-6 text-[17px] font-normal text-bg transition-opacity hover:opacity-[.85]"
 		>
 			<svg
 				class="size-5"
@@ -113,7 +114,7 @@
 			href={primary.asset.url}
 			download
 			rel="external"
-			class="inline-flex min-h-12 items-center gap-2 rounded-xl bg-wa-700 px-6 py-3 text-base font-semibold text-white shadow-sm transition-colors hover:bg-wa-800"
+			class="inline-flex h-12 items-center gap-2 rounded-full bg-fg px-6 text-[17px] font-normal text-bg transition-opacity hover:opacity-[.85]"
 		>
 			<svg
 				class="size-5"
@@ -129,15 +130,10 @@
 			</svg>
 			{m.downloadFor({ os: currentOs })}
 		</a>
-		<p class="text-sm text-stone-600 dark:text-stone-400">
-			{m.downloadVersion({ version: latest.tag })} · {primaryLabel(primary.kind)} · {size(
-				primary.asset.size
-			)}
-		</p>
 	{:else if latest === null}
 		<button
 			disabled
-			class="inline-flex min-h-12 items-center gap-2 rounded-xl bg-wa-700 px-6 py-3 text-base font-semibold text-white opacity-60 shadow-sm"
+			class="inline-flex h-12 cursor-not-allowed items-center gap-2 rounded-full bg-line-strong px-6 text-[17px] font-normal text-muted"
 		>
 			<svg
 				class="size-5"
@@ -153,32 +149,46 @@
 			</svg>
 			{currentOs ? m.downloadFor({ os: currentOs }) : m.download()}
 		</button>
-		<p class="text-sm text-stone-600 dark:text-stone-400">{m.noReleases()}</p>
+	{/if}
+
+	<a
+		href={REPO_URL}
+		rel="external"
+		class="inline-flex h-12 items-center rounded-full border border-line-strong bg-surface px-6 text-[17px] text-fg transition-colors hover:bg-bg"
+	>
+		{m.viewOnGitHub()}
+	</a>
+
+	{#if latest && primary && currentOs}
+		<p class="-mt-1 text-sm text-muted">
+			{m.downloadVersion({ version: latest.tag })} · {primaryLabel(primary.kind)} · {size(
+				primary.asset.size
+			)}
+		</p>
+	{:else if latest === null}
+		<p class="-mt-1 text-sm text-muted">{m.noReleases()}</p>
 	{/if}
 
 	{#if options.length > 0}
-		<details class="group w-full max-w-md text-sm" open={!hasPrimary}>
-			<summary
-				class="cursor-pointer rounded-md py-1 font-medium text-stone-700 select-none hover:text-stone-900 dark:text-stone-300 dark:hover:text-white"
-			>
+		<details
+			class="group w-full max-w-md overflow-hidden rounded-xl border border-line bg-surface text-sm"
+			open={!hasPrimary}
+		>
+			<summary class="cursor-pointer px-4 py-3 font-medium text-fg select-none hover:bg-bg">
 				{hasPrimary ? m.otherDownloads() : m.allDownloads()}
 			</summary>
-			<ul
-				class="mt-2 divide-y divide-stone-200 overflow-hidden rounded-xl border border-stone-200 bg-white text-left dark:divide-stone-800 dark:border-stone-800 dark:bg-stone-900"
-			>
+			<ul class="divide-y divide-line border-t border-line text-left">
 				{#each options as option (option.url)}
 					<li>
 						<a
 							href={option.url}
 							download
 							rel="external"
-							class="flex items-center justify-between gap-4 px-4 py-2.5 hover:bg-stone-100 dark:hover:bg-stone-800"
+							class="flex items-center justify-between gap-4 px-4 py-3.5 hover:bg-bg"
 						>
 							<span>{option.label}</span>
 							{#if option.size !== undefined}
-								<span class="text-stone-500 tabular-nums dark:text-stone-400"
-									>{size(option.size)}</span
-								>
+								<span class="text-muted tabular-nums">{size(option.size)}</span>
 							{/if}
 						</a>
 					</li>
@@ -187,7 +197,5 @@
 		</details>
 	{/if}
 
-	<p class="max-w-md text-center text-xs text-stone-500 sm:text-left dark:text-stone-400">
-		{m.unsigned()}
-	</p>
+	<p class="max-w-md text-xs leading-relaxed text-muted">{m.unsigned()}</p>
 </div>

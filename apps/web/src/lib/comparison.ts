@@ -6,6 +6,23 @@ export const measurements = {
 	electron: { name: 'Electron 45.0.0', deb: 101_044_140, appimage: 125_653_238, rssMiB: 868.8 }
 } as const;
 
+export const macosMeasurements = {
+	whatherust: {
+		name: 'WhatheRust 0.1.0',
+		dmgArm64: 6_260_496,
+		installedApp: 18_112_512,
+		rssMedianMiB: 747.22,
+		rssRunsMiB: [666.98, 747.22]
+	},
+	electron: {
+		name: 'Electron 45.0.0',
+		dmgArm64: 120_489_258,
+		installedApp: 270_184_448,
+		rssMedianMiB: 877.39,
+		rssRunsMiB: [869.61, 877.39]
+	}
+} as const;
+
 export function formatMB(bytes: number): string {
 	return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }

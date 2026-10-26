@@ -1,6 +1,11 @@
-/target/
-/src-tauri/target/
-/src-tauri/gen/schemas/
+node_modules/
+.turbo/
+.svelte-kit/
+.vercel/
+.env*
+!.env.example
+target/
+apps/desktop/src-tauri/gen/schemas/
 .DS_Store
 .idea/
 .vscode/

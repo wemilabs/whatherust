@@ -1,15 +1,15 @@
 [package]
-name = "whatsapp-desktop-rs"
+name = "whatherust"
 version = "0.1.0"
-description = "A lightweight native webview wrapper for WhatsApp Web"
+description = "WhatheRust: a lightweight native webview wrapper for WhatsApp Web"
 edition = "2024"
 
 [lib]
-name = "whatsapp_desktop_rs_lib"
+name = "whatherust_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "whatsapp-desktop-rs"
+name = "whatherust"
 path = "src/main.rs"
 
 [build-dependencies]
@@ -22,7 +22,9 @@ tauri-plugin-opener = "2.7"
 tauri-plugin-single-instance = "2.5"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
 objc2-web-kit = { version = "0.3.2", default-features = false, features = ["std", "WKWebView", "WKWebViewConfiguration", "WKPreferences", "objc2-app-kit"] }
+security-framework = "3.7.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.62", features = ["Win32_Graphics_Dwm"] }

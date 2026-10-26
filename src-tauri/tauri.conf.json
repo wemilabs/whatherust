@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "WhatsApp",
+  "productName": "WhatheRust",
   "version": "0.1.0",
-  "identifier": "com.wemilabs.whatsapp-desktop-rs",
+  "identifier": "com.wemilabs.whatherust",
   "build": {
     "frontendDist": "../src"
   },
@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "WhatsApp",
+        "title": "WhatheRust",
         "titleBarStyle": "Transparent",
         "url": "https://web.whatsapp.com",
         "width": 1200,

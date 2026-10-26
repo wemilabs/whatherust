@@ -17,7 +17,7 @@ export function renderMarkdown(markdown: string): string {
 		transformTags: {
 			a: (tagName, attribs) => {
 				const transformed = { ...attribs };
-				if (/^https?:\/\//i.test(transformed.href ?? '')) {
+				if (/^(https?:)?\/\//i.test(transformed.href ?? '')) {
 					transformed.target = '_blank';
 					transformed.rel = 'noopener noreferrer';
 				} else if (transformed.target !== '_blank') {

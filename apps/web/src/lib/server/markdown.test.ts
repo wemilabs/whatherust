@@ -19,6 +19,13 @@ describe('renderMarkdown', () => {
 		expect(html).not.toContain('rel=');
 	});
 
+	it('opens protocol-relative links in a new tab', () => {
+		const html = renderMarkdown('[docs](//example.com)');
+		expect(html).toContain('href="//example.com"');
+		expect(html).toContain('target="_blank"');
+		expect(html).toContain('rel="noopener noreferrer"');
+	});
+
 	it('does not pass through a user-supplied non-blank target', () => {
 		const html = renderMarkdown('<a href="#x" target="_top">anchor</a>');
 		expect(html).toContain('<a href="#x">anchor</a>');

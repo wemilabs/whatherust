@@ -66,6 +66,18 @@ pub fn run() {
                 })
                 .build()?;
 
+            #[cfg(target_os = "macos")]
+            window.with_webview(|webview| {
+                // Let WebKit dispatch target=_blank; on_new_window still opens URLs externally.
+                unsafe {
+                    let webview = &*webview.inner().cast::<objc2_web_kit::WKWebView>();
+                    webview
+                        .configuration()
+                        .preferences()
+                        .setJavaScriptCanOpenWindowsAutomatically(true);
+                }
+            })?;
+
             let close_window = window.clone();
             window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {

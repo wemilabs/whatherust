@@ -7,10 +7,12 @@ use tauri::{
     webview::NewWindowResponse,
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 
 const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
+const NOTIFICATION_CLICK_SCRIPT: &str = include_str!("notification-click.js");
 
 #[cfg(target_os = "linux")]
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
@@ -44,6 +46,22 @@ pub fn run() {
                 .ok_or("missing main window configuration")?;
             let app_handle = app.handle().clone();
 
+            app.notification().on_action({
+                let app_handle = app_handle.clone();
+                move |performed| {
+                    if performed.action_id() != "tap" {
+                        return;
+                    }
+                    show_main_window(&app_handle);
+                    if let (Some(window), Some(notification)) = (
+                        app_handle.get_webview_window("main"),
+                        performed.notification(),
+                    ) {
+                        let _ = window.eval(notification_click_script(notification.id()));
+                    }
+                }
+            })?;
+
             if !cfg!(debug_assertions) {
                 tauri::async_runtime::spawn(check_for_update(app.handle().clone()));
             }
@@ -62,6 +80,8 @@ pub fn run() {
             let builder = WebviewWindowBuilder::from_config(app.handle(), window_config)?
                 // macOS ignores this override; WKWebView persists by bundle identifier.
                 .data_directory(data_dir.join("webview"))
+                // Replays native notification clicks into WhatsApp's own Notification handlers.
+                .initialization_script(NOTIFICATION_CLICK_SCRIPT)
                 // WhatsApp Web rejects or degrades WebKit user agents.
                 .user_agent(USER_AGENT)
                 .on_navigation({
@@ -399,9 +419,22 @@ fn toggle_main_window(app: &AppHandle) {
     }
 }
 
+fn notification_click_script(id: i32) -> String {
+    format!("window.__whatherustNotificationClick?.({id})")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::is_allowed_url;
+    use super::{NOTIFICATION_CLICK_SCRIPT, is_allowed_url, notification_click_script};
+
+    #[test]
+    fn notification_click_script_uses_the_javascript_hook() {
+        assert_eq!(
+            notification_click_script(-7),
+            "window.__whatherustNotificationClick?.(-7)"
+        );
+        assert!(NOTIFICATION_CLICK_SCRIPT.contains("__whatherustNotificationClick"));
+    }
 
     #[test]
     fn allows_only_https_whatsapp_and_internal_document_urls() {

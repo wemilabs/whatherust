@@ -86,7 +86,7 @@ deployed on Vercel.
 
 ## Limitations
 
-- Clicking a native notification does not focus the corresponding chat.
+- Clicking a native notification brings the window forward and opens its chat through WhatsApp Web's own click handler; on Windows only while the toast is on screen (not from the Action Center).
 - Calls and voice features may not work in WebKitGTK.
 - This is an experimental wrapper scaffold; it is not an independent WhatsApp client.
 

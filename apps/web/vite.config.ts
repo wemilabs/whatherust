@@ -5,6 +5,8 @@ import adapter from '@sveltejs/adapter-vercel';
 import { sveltekit } from '@sveltejs/kit/vite';
 
 export default defineConfig({
+	// sanitize-html require()s the ESM-only htmlparser2, which Vercel's function runtime rejects; bundle it.
+	ssr: { noExternal: ['sanitize-html'] },
 	plugins: [
 		tailwindcss(),
 		sveltekit({
@@ -13,8 +15,7 @@ export default defineConfig({
 				runes: ({ filename }) =>
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
-			adapter: adapter(),
-			prerender: { entries: ['*', '/fr', '/fr/changelog'] }
+			adapter: adapter()
 		}),
 
 		paraglideVitePlugin({

@@ -61,7 +61,7 @@ pub fn run() {
                 })
                 .on_document_title_changed(|webview, title| {
                     if let Some(tray) = webview.app_handle().tray_by_id("main") {
-                        let _ = tray.set_tooltip(Some(title));
+                        let _ = tray.set_tooltip(Some(title.replace("WhatsApp", "WhatheRust")));
                     }
                 })
                 .build()?;
@@ -96,12 +96,12 @@ pub fn run() {
                 }
             });
 
-            let show_item = MenuItem::with_id(app, "show", "Show WhatsApp", true, None::<&str>)?;
+            let show_item = MenuItem::with_id(app, "show", "Show WhatheRust", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main")
-                .tooltip("WhatsApp")
+                .tooltip("WhatheRust")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_tray_icon_event({
@@ -139,7 +139,7 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building WhatsApp")
+        .expect("error while building WhatheRust")
         .run(|app, event| {
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen {

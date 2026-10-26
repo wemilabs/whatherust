@@ -1,0 +1,118 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target universal-apple-darwin
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            args: ''
+            targets: ''
+          - platform: windows-latest
+            args: ''
+            targets: ''
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Require a v* tag
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            echo "::error::Run this workflow from a v* tag"
+            exit 1
+          fi
+      - uses: actions/checkout@v7
+      - name: Set app version from the tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}" node -e 'const fs = require("node:fs"); const path = "apps/desktop/src-tauri/tauri.conf.json"; const config = JSON.parse(fs.readFileSync(path, "utf8")); config.version = process.env.VERSION; fs.writeFileSync(path, JSON.stringify(config, null, "\t") + "\n");'
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: lts/*
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+      - uses: tauri-apps/tauri-action@v1
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: WhatheRust ${{ github.ref_name }}
+          releaseDraft: true
+          generateReleaseNotes: true
+          args: ${{ matrix.args }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ''
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create stable installer copies
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p 'WhatheRust_*-setup.exe' -D "$temp_dir"
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p 'WhatheRust_*_universal.dmg' -D "$temp_dir"
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p 'WhatheRust_*.AppImage' -D "$temp_dir"
+
+          shopt -s nullglob
+          setup_assets=("$temp_dir"/WhatheRust_*-setup.exe)
+          dmg_assets=("$temp_dir"/WhatheRust_*_universal.dmg)
+          appimage_assets=("$temp_dir"/WhatheRust_*.AppImage)
+
+          if (( ${#setup_assets[@]} != 1 )); then
+            echo "::error::Expected exactly one WhatheRust_*-setup.exe asset; found ${#setup_assets[@]}"
+            exit 1
+          fi
+          if (( ${#dmg_assets[@]} != 1 )); then
+            echo "::error::Expected exactly one WhatheRust_*_universal.dmg asset; found ${#dmg_assets[@]}"
+            exit 1
+          fi
+          if (( ${#appimage_assets[@]} != 1 )); then
+            echo "::error::Expected exactly one WhatheRust_*.AppImage asset; found ${#appimage_assets[@]}"
+            exit 1
+          fi
+
+          cp "${setup_assets[0]}" "$temp_dir/WhatheRust-windows-x64-setup.exe"
+          cp "${dmg_assets[0]}" "$temp_dir/WhatheRust-macos-universal.dmg"
+          cp "${appimage_assets[0]}" "$temp_dir/WhatheRust-linux-x86_64.AppImage"
+
+          gh release upload "$GITHUB_REF_NAME" \
+            "$temp_dir/WhatheRust-windows-x64-setup.exe" \
+            "$temp_dir/WhatheRust-macos-universal.dmg" \
+            "$temp_dir/WhatheRust-linux-x86_64.AppImage" \
+            -R "$GITHUB_REPOSITORY" \
+            --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Publish the release
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

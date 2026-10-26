@@ -1,0 +1,19 @@
+{
+  "name": "whatherust",
+  "license": "MIT",
+  "private": true,
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev:web": "turbo run dev --filter=@whatherust/web",
+    "dev:desktop": "turbo run dev --filter=@whatherust/desktop",
+    "build": "turbo run build --filter=@whatherust/web",
+    "check": "turbo run check",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "^2.11.10"
+  }
+}

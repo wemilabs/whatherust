@@ -8,10 +8,18 @@ export const load: LayoutServerLoad = async ({ fetch, setHeaders }) => {
 	setHeaders({ 'cache-control': 'public, max-age=0, s-maxage=600, stale-while-revalidate=86400' });
 
 	const [repo, releases] = await Promise.all([getRepo(fetch), getReleases(fetch)]);
-	const latest = releases.find((release) => !release.prerelease) ?? null;
+	const latestRelease = releases?.find((release) => !release.prerelease) ?? null;
+	const latest =
+		releases === null
+			? undefined
+			: latestRelease && {
+					tag: latestRelease.tag,
+					url: latestRelease.url,
+					assets: latestRelease.assets
+				};
 
 	return {
 		stars: repo?.stars ?? null,
-		latest: latest && { tag: latest.tag, url: latest.url, assets: latest.assets }
+		latest
 	};
 };

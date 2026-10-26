@@ -6,7 +6,7 @@ export const load: PageServerLoad = async ({ fetch }) => {
 	const releases = await getReleases(fetch, { all: true });
 
 	return {
-		releases: releases.map(({ tag, name, url, publishedAt, prerelease, body }) => ({
+		releases: (releases ?? []).map(({ tag, name, url, publishedAt, prerelease, body }) => ({
 			tag,
 			name,
 			url,

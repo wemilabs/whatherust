@@ -2,6 +2,15 @@ import type { Release } from '#lib/types.js';
 
 export type Platform = 'windows' | 'macos' | 'linux' | 'unknown';
 
+export const STABLE_DOWNLOADS: Record<'windows' | 'macos' | 'linux', string> = {
+	windows:
+		'https://github.com/wemilabs/whatherust/releases/latest/download/WhatheRust-windows-x64-setup.exe',
+	macos:
+		'https://github.com/wemilabs/whatherust/releases/latest/download/WhatheRust-macos-universal.dmg',
+	linux:
+		'https://github.com/wemilabs/whatherust/releases/latest/download/WhatheRust-linux-x86_64.AppImage'
+};
+
 type NavigatorInfo = {
 	userAgentData?: { platform?: string; mobile?: boolean };
 	userAgent: string;
@@ -29,7 +38,9 @@ export function pickAssets(release: Pick<Release, 'assets'> | null): {
 	macos: { dmg?: Asset };
 	linux: { appimage?: Asset; deb?: Asset; rpm?: Asset };
 } {
-	const assets = release?.assets ?? [];
+	const assets = (release?.assets ?? []).filter(
+		(asset) => !/^WhatheRust-(windows|macos|linux)-/.test(asset.name)
+	);
 
 	return {
 		windows: {

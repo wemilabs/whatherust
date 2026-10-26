@@ -126,6 +126,34 @@ describe('pickAssets', () => {
 			linux: { appimage: undefined, deb: undefined, rpm: undefined }
 		});
 	});
+
+	it('ignores stable-named installer copies', () => {
+		expect(
+			pickAssets({
+				assets: [
+					{
+						name: 'WhatheRust-windows-x64-setup.exe',
+						url: 'https://example.com/stable-windows.exe',
+						size: 100
+					},
+					{
+						name: 'WhatheRust-macos-universal.dmg',
+						url: 'https://example.com/stable-macos.dmg',
+						size: 101
+					},
+					{
+						name: 'WhatheRust-linux-x86_64.AppImage',
+						url: 'https://example.com/stable-linux.AppImage',
+						size: 102
+					}
+				]
+			})
+		).toEqual({
+			windows: { setup: undefined, msi: undefined },
+			macos: { dmg: undefined },
+			linux: { appimage: undefined, deb: undefined, rpm: undefined }
+		});
+	});
 });
 
 describe('pickPrimary', () => {
@@ -142,7 +170,7 @@ describe('pickPrimary', () => {
 	});
 
 	it('returns undefined when the platform primary asset is missing', () => {
-		expect(pickPrimary('windows', { assets: [release.assets[1]] })).toBeUndefined();
+		expect(pickPrimary('windows', { assets: [release.assets[2]] })).toBeUndefined();
 	});
 
 	it('returns undefined for a null release', () => {

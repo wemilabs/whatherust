@@ -71,6 +71,47 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Create stable installer copies
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p '*-setup.exe' -D "$temp_dir"
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p '*_universal.dmg' -D "$temp_dir"
+          gh release download "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" -p '*.AppImage' -D "$temp_dir"
+
+          shopt -s nullglob
+          setup_assets=("$temp_dir"/*-setup.exe)
+          dmg_assets=("$temp_dir"/*_universal.dmg)
+          appimage_assets=("$temp_dir"/*.AppImage)
+
+          if (( ${#setup_assets[@]} != 1 )); then
+            echo "::error::Expected exactly one *-setup.exe asset; found ${#setup_assets[@]}"
+            exit 1
+          fi
+          if (( ${#dmg_assets[@]} != 1 )); then
+            echo "::error::Expected exactly one *_universal.dmg asset; found ${#dmg_assets[@]}"
+            exit 1
+          fi
+          if (( ${#appimage_assets[@]} != 1 )); then
+            echo "::error::Expected exactly one *.AppImage asset; found ${#appimage_assets[@]}"
+            exit 1
+          fi
+
+          cp "${setup_assets[0]}" "$temp_dir/WhatheRust-windows-x64-setup.exe"
+          cp "${dmg_assets[0]}" "$temp_dir/WhatheRust-macos-universal.dmg"
+          cp "${appimage_assets[0]}" "$temp_dir/WhatheRust-linux-x86_64.AppImage"
+
+          gh release upload "$GITHUB_REF_NAME" \
+            "$temp_dir/WhatheRust-windows-x64-setup.exe" \
+            "$temp_dir/WhatheRust-macos-universal.dmg" \
+            "$temp_dir/WhatheRust-linux-x86_64.AppImage" \
+            -R "$GITHUB_REPOSITORY" \
+            --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Publish the release
         run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
         env:

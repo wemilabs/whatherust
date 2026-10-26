@@ -47,6 +47,32 @@ beforeEach(() => {
 });
 
 describe('getReleases', () => {
+	it('returns null when the first page request fails', async () => {
+		const { fetcher } = makeFetcher([{ body: {}, status: 503 }]);
+
+		await expect(getReleases(fetcher)).resolves.toBeNull();
+	});
+
+	it('returns null when the first page response is not an array', async () => {
+		const { fetcher } = makeFetcher([{ body: {} }]);
+
+		await expect(getReleases(fetcher)).resolves.toBeNull();
+	});
+
+	it('returns null when the first page fetch throws', async () => {
+		const fetcher: typeof fetch = async () => {
+			throw new Error('network failure');
+		};
+
+		await expect(getReleases(fetcher)).resolves.toBeNull();
+	});
+
+	it('returns an empty array when GitHub has no releases', async () => {
+		const { fetcher } = makeFetcher([{ body: [] }]);
+
+		await expect(getReleases(fetcher)).resolves.toEqual([]);
+	});
+
 	it('requests one page of 20 releases by default', async () => {
 		const { fetcher, calls } = makeFetcher([
 			{ body: [githubRelease('v0.1.0')], headers: { Link: `<${nextPageUrl}>; rel="next"` } }
@@ -56,7 +82,7 @@ describe('getReleases', () => {
 
 		expect(calls).toHaveLength(1);
 		expect(calls[0].url).toBe(`${apiUrl}?per_page=20`);
-		expect(releases.map((release) => release.tag)).toEqual(['v0.1.0']);
+		expect(releases?.map((release) => release.tag)).toEqual(['v0.1.0']);
 	});
 
 	it('follows two pages when all releases are requested', async () => {
@@ -70,7 +96,7 @@ describe('getReleases', () => {
 		expect(calls.map((call) => call.url)).toEqual([`${apiUrl}?per_page=100`, nextPageUrl]);
 		expect(calls[0].init?.redirect).toBeUndefined();
 		expect(calls[1].init?.redirect).toBe('error');
-		expect(releases.map((release) => release.tag)).toEqual(['v0.2.0', 'v0.1.0']);
+		expect(releases?.map((release) => release.tag)).toEqual(['v0.2.0', 'v0.1.0']);
 	});
 
 	it('filters draft releases', async () => {
@@ -80,7 +106,7 @@ describe('getReleases', () => {
 
 		const releases = await getReleases(fetcher);
 
-		expect(releases.map((release) => release.tag)).toEqual(['v0.2.0']);
+		expect(releases?.map((release) => release.tag)).toEqual(['v0.2.0']);
 	});
 
 	it('does not follow a next link outside api.github.com', async () => {
@@ -96,7 +122,7 @@ describe('getReleases', () => {
 		const releases = await getReleases(fetcher, { all: true });
 
 		expect(calls).toHaveLength(1);
-		expect(releases.map((release) => release.tag)).toEqual(['v0.1.0']);
+		expect(releases?.map((release) => release.tag)).toEqual(['v0.1.0']);
 	});
 
 	it('returns collected releases if a later page fails', async () => {
@@ -108,7 +134,7 @@ describe('getReleases', () => {
 		const releases = await getReleases(fetcher, { all: true });
 
 		expect(calls).toHaveLength(2);
-		expect(releases.map((release) => release.tag)).toEqual(['v0.1.0']);
+		expect(releases?.map((release) => release.tag)).toEqual(['v0.1.0']);
 	});
 
 	it('sends Authorization only when the token is set', async () => {

@@ -74,13 +74,13 @@ function isApiPage(url: string): boolean {
 export async function getReleases(
 	fetcher: typeof fetch,
 	{ all = false }: { all?: boolean } = {}
-): Promise<Release[]> {
+): Promise<Release[] | null> {
 	const response = await request<GitHubRelease[]>(
 		`${API_URL}/repos/wemilabs/whatherust/releases?per_page=${all ? 100 : 20}`,
 		fetcher
 	);
 
-	if (!response || !Array.isArray(response.data)) return [];
+	if (!response || !Array.isArray(response.data)) return null;
 
 	const releases = [...response.data];
 	if (all) {

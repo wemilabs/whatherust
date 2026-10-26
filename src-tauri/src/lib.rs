@@ -36,9 +36,12 @@ pub fn run() {
                 .ok_or("missing main window configuration")?;
             let app_handle = app.handle().clone();
 
+            let data_dir = app.path().app_local_data_dir()?;
+            migrate_legacy_data_dir(&data_dir);
+
             let window = WebviewWindowBuilder::from_config(app.handle(), window_config)?
                 // macOS ignores this override; WKWebView persists by bundle identifier.
-                .data_directory(app.path().app_local_data_dir()?.join("webview"))
+                .data_directory(data_dir.join("webview"))
                 // WhatsApp Web rejects or degrades WebKit user agents.
                 .user_agent(USER_AGENT)
                 .on_navigation({
@@ -153,6 +156,20 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);
         });
+}
+
+/// Keeps the WhatsApp session from builds made before the app identifier was renamed.
+fn migrate_legacy_data_dir(data_dir: &std::path::Path) {
+    const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
+
+    if let Some(legacy) = data_dir
+        .parent()
+        .map(|parent| parent.join(LEGACY_IDENTIFIER))
+        && legacy.is_dir()
+        && !data_dir.exists()
+    {
+        let _ = std::fs::rename(legacy, data_dir);
+    }
 }
 
 #[cfg(target_os = "windows")]

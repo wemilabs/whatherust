@@ -4368,7 +4368,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "whatsapp-desktop-rs"
+name = "whatherust"
 version = "0.1.0"
 dependencies = [
  "objc2-web-kit",

@@ -168,6 +168,7 @@ pub fn run() {
 
 /// Keeps the WhatsApp session from builds made before the app identifier was renamed:
 /// moves the sibling folder named after the old identifier to `dir`.
+/// Moved, not copied, on purpose: the same WhatsApp linked-device keys must never live in two apps.
 fn migrate_legacy_dir(dir: &std::path::Path) {
     const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
 

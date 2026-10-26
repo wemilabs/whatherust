@@ -12,7 +12,7 @@
 	"languageLabel": "Language",
 	"heroEyebrow": "Rust + Tauri · Windows · macOS · Linux",
 	"heroTitle": "WhatsApp on your desktop, without the bloat",
-	"heroSubtitle": "WhatheRust is a lightweight, faster WhatsApp desktop client.",
+	"heroSubtitle": "A lightweight, faster WhatsApp desktop client.",
 	"openSource": "Open source on GitHub",
 	"viewOnGitHub": "View on GitHub",
 	"licenseMit": "MIT licensed",

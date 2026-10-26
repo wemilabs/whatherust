@@ -6,7 +6,9 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::NewWindowResponse,
 };
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_updater::UpdaterExt;
 
 const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
 
@@ -23,6 +25,8 @@ pub fn run() {
             show_main_window(app);
         }))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // The injected link-click handler calls opener IPC, which the remote page may not use;
         // let new-window requests reach `on_new_window` instead.
         .plugin(
@@ -39,6 +43,10 @@ pub fn run() {
                 .find(|config| config.label == "main")
                 .ok_or("missing main window configuration")?;
             let app_handle = app.handle().clone();
+
+            if !cfg!(debug_assertions) {
+                tauri::async_runtime::spawn(check_for_update(app.handle().clone()));
+            }
 
             let data_dir = app.path().app_local_data_dir()?;
             move_legacy(&data_dir.with_file_name(LEGACY_IDENTIFIER), &data_dir);
@@ -171,6 +179,41 @@ pub fn run() {
             #[cfg(not(target_os = "macos"))]
             let _ = (app, event);
         });
+}
+
+async fn check_for_update(app: AppHandle) {
+    async fn check(app: &AppHandle) -> tauri_plugin_updater::Result<()> {
+        let Some(update) = app.updater()?.check().await? else {
+            return Ok(());
+        };
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+
+        app.dialog()
+            .message(format!(
+                "WhatheRust {} is available. Install it now? The app will restart.",
+                update.version
+            ))
+            .title("WhatheRust update")
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Install".into(),
+                "Later".into(),
+            ))
+            .show_with_result(move |result| {
+                let _ = sender.send(result);
+            });
+
+        if matches!(
+            receiver.await,
+            Ok(MessageDialogResult::Custom(button)) if button == "Install"
+        ) {
+            update.download_and_install(|_, _| {}, || {}).await?;
+            app.restart();
+        }
+
+        Ok(())
+    }
+
+    let _ = check(&app).await;
 }
 
 /// Moves data left by builds made before the app identifier was renamed.

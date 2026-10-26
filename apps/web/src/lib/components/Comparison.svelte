@@ -1,11 +1,8 @@
 <script lang="ts">
 	import { m } from '#lib/paraglide/messages.js';
-	import { getLocale } from '#lib/paraglide/runtime.js';
 	import {
 		formatMB,
-		formatMiB,
 		macosMeasurements,
-		measuredOn,
 		measurements,
 		windowsMeasurements
 	} from '#lib/comparison.js';
@@ -14,213 +11,80 @@
 	const { whatherust: macWhatheRust, electron: macElectron } = macosMeasurements;
 	const { whatherust: windowsWhatheRust, electron: windowsElectron } = windowsMeasurements;
 
-	const date = $derived(
-		new Intl.DateTimeFormat(getLocale(), { dateStyle: 'long', timeZone: 'UTC' }).format(
-			new Date(measuredOn)
-		)
-	);
+	const sizePair = (
+		label: string,
+		oursName: string,
+		oursValue: number,
+		electronName: string,
+		electronValue: number
+	) => ({
+		label,
+		rows: [
+			{ name: oursName, value: oursValue, text: formatMB(oursValue), ours: true },
+			{ name: electronName, value: electronValue, text: formatMB(electronValue), ours: false }
+		]
+	});
 
 	const platforms = $derived([
 		{
 			id: 'ubuntu',
 			title: m.compareUbuntuTitle(),
 			size: [
-				{
-					label: m.compareSizeDeb(),
-					rows: [
-						{
-							name: linuxWhatheRust.name,
-							value: linuxWhatheRust.deb,
-							text: formatMB(linuxWhatheRust.deb),
-							detail: '',
-							ours: true
-						},
-						{
-							name: linuxElectron.name,
-							value: linuxElectron.deb,
-							text: formatMB(linuxElectron.deb),
-							detail: '',
-							ours: false
-						}
-					]
-				},
-				{
-					label: m.compareSizeAppImage(),
-					rows: [
-						{
-							name: linuxWhatheRust.name,
-							value: linuxWhatheRust.appimage,
-							text: formatMB(linuxWhatheRust.appimage),
-							detail: '',
-							ours: true
-						},
-						{
-							name: linuxElectron.name,
-							value: linuxElectron.appimage,
-							text: formatMB(linuxElectron.appimage),
-							detail: '',
-							ours: false
-						}
-					]
-				}
-			],
-			memory: [
-				{
-					label: 'RSS',
-					rows: [
-						{
-							name: linuxWhatheRust.name,
-							value: linuxWhatheRust.rssMiB,
-							text: formatMiB(linuxWhatheRust.rssMiB),
-							detail: '',
-							ours: true
-						},
-						{
-							name: linuxElectron.name,
-							value: linuxElectron.rssMiB,
-							text: formatMiB(linuxElectron.rssMiB),
-							detail: '',
-							ours: false
-						}
-					]
-				}
-			],
-			memoryNote: m.compareLinuxMemoryNote(),
-			method: m.compareMethod({ date })
+				sizePair(
+					m.compareSizeDeb(),
+					linuxWhatheRust.name,
+					linuxWhatheRust.deb,
+					linuxElectron.name,
+					linuxElectron.deb
+				),
+				sizePair(
+					m.compareSizeAppImage(),
+					linuxWhatheRust.name,
+					linuxWhatheRust.appimage,
+					linuxElectron.name,
+					linuxElectron.appimage
+				)
+			]
 		},
 		{
 			id: 'macos',
 			title: m.compareMacTitle(),
 			size: [
-				{
-					label: m.compareMacSizeDmg(),
-					rows: [
-						{
-							name: macWhatheRust.name,
-							value: macWhatheRust.dmgArm64,
-							text: formatMB(macWhatheRust.dmgArm64),
-							detail: '',
-							ours: true
-						},
-						{
-							name: macElectron.name,
-							value: macElectron.dmgArm64,
-							text: formatMB(macElectron.dmgArm64),
-							detail: '',
-							ours: false
-						}
-					]
-				},
-				{
-					label: m.compareMacSizeInstalled(),
-					rows: [
-						{
-							name: macWhatheRust.name,
-							value: macWhatheRust.installedApp,
-							text: formatMB(macWhatheRust.installedApp),
-							detail: '',
-							ours: true
-						},
-						{
-							name: macElectron.name,
-							value: macElectron.installedApp,
-							text: formatMB(macElectron.installedApp),
-							detail: '',
-							ours: false
-						}
-					]
-				}
-			],
-			memory: [
-				{
-					label: 'RSS',
-					rows: [
-						{
-							name: macWhatheRust.name,
-							value: macWhatheRust.rssMedianMiB,
-							text: formatMiB(macWhatheRust.rssMedianMiB),
-							detail: `runs: ${Math.round(macWhatheRust.rssRunsMiB[0])} / ${Math.round(macWhatheRust.rssRunsMiB[1])}`,
-							ours: true
-						},
-						{
-							name: macElectron.name,
-							value: macElectron.rssMedianMiB,
-							text: formatMiB(macElectron.rssMedianMiB),
-							detail: `runs: ${Math.round(macElectron.rssRunsMiB[0])} / ${Math.round(macElectron.rssRunsMiB[1])}`,
-							ours: false
-						}
-					]
-				}
-			],
-			memoryNote: m.compareMacMemoryNote(),
-			method: m.compareMacMethod()
+				sizePair(
+					m.compareMacSizeDmg(),
+					macWhatheRust.name,
+					macWhatheRust.dmgArm64,
+					macElectron.name,
+					macElectron.dmgArm64
+				),
+				sizePair(
+					m.compareMacSizeInstalled(),
+					macWhatheRust.name,
+					macWhatheRust.installedApp,
+					macElectron.name,
+					macElectron.installedApp
+				)
+			]
 		},
 		{
 			id: 'windows',
 			title: m.compareWindowsTitle(),
 			size: [
-				{
-					label: m.compareWindowsSizeInstaller(),
-					rows: [
-						{
-							name: windowsWhatheRust.name,
-							value: windowsWhatheRust.installer,
-							text: formatMB(windowsWhatheRust.installer),
-							detail: '',
-							ours: true
-						},
-						{
-							name: windowsElectron.name,
-							value: windowsElectron.installer,
-							text: formatMB(windowsElectron.installer),
-							detail: '',
-							ours: false
-						}
-					]
-				},
-				{
-					label: m.compareWindowsSizeInstalled(),
-					rows: [
-						{
-							name: windowsWhatheRust.name,
-							value: windowsWhatheRust.installedApp,
-							text: formatMB(windowsWhatheRust.installedApp),
-							detail: '',
-							ours: true
-						},
-						{
-							name: windowsElectron.name,
-							value: windowsElectron.installedApp,
-							text: formatMB(windowsElectron.installedApp),
-							detail: '',
-							ours: false
-						}
-					]
-				}
-			],
-			memory: [
-				{
-					label: m.compareWindowsMemoryLabel(),
-					rows: [
-						{
-							name: windowsWhatheRust.name,
-							value: windowsWhatheRust.workingSetMedianMiB,
-							text: formatMiB(windowsWhatheRust.workingSetMedianMiB),
-							detail: `runs: ${Math.round(windowsWhatheRust.workingSetRunsMiB[0])} / ${Math.round(windowsWhatheRust.workingSetRunsMiB[1])}`,
-							ours: true
-						},
-						{
-							name: windowsElectron.name,
-							value: windowsElectron.workingSetMedianMiB,
-							text: formatMiB(windowsElectron.workingSetMedianMiB),
-							detail: `runs: ${Math.round(windowsElectron.workingSetRunsMiB[0])} / ${Math.round(windowsElectron.workingSetRunsMiB[1])}`,
-							ours: false
-						}
-					]
-				}
-			],
-			memoryNote: m.compareWindowsMemoryNote(),
-			method: m.compareWindowsMethod()
+				sizePair(
+					m.compareWindowsSizeInstaller(),
+					windowsWhatheRust.name,
+					windowsWhatheRust.installer,
+					windowsElectron.name,
+					windowsElectron.installer
+				),
+				sizePair(
+					m.compareWindowsSizeInstalled(),
+					windowsWhatheRust.name,
+					windowsWhatheRust.installedApp,
+					windowsElectron.name,
+					windowsElectron.installedApp
+				)
+			]
 		}
 	]);
 
@@ -242,100 +106,51 @@
 		<h2 id="comparison-title" class="mt-5 text-[32px] sm:text-[40px]">{m.compareTitle()}</h2>
 		<p class="mt-5 max-w-3xl text-base leading-relaxed text-muted sm:text-lg">{m.compareIntro()}</p>
 
-		<div class="mt-10 space-y-10">
+		<div
+			class="-mx-4 mt-10 grid grid-cols-1 gap-px border-y border-line bg-line sm:-mx-8 lg:grid-cols-3"
+		>
 			{#each platforms as platform (platform.id)}
-				<section aria-labelledby="{platform.id}-title">
-					<h3 id="{platform.id}-title" class="mb-4 text-[18px] font-medium tracking-[-0.01em]">
+				<section aria-labelledby="{platform.id}-title" class="h-full bg-bg p-6 sm:p-8">
+					<h3 id="{platform.id}-title" class="text-[18px] font-medium tracking-[-0.01em]">
 						{platform.title}
 					</h3>
-					<div class="-mx-4 grid gap-px border-y border-line bg-line sm:-mx-8 lg:grid-cols-2">
-						<div class="bg-bg p-6 sm:p-8">
-							<h4 class="text-[18px]">{m.compareSize()}</h4>
-							<p class="mt-1 text-sm text-muted">{m.compareLower()}</p>
-							{#each platform.size as metric (metric.label)}
-								{@const max = Math.max(...metric.rows.map((row) => row.value))}
-								<div class="mt-6">
-									<p class="text-sm font-medium text-fg">{metric.label}</p>
-									<dl class="mt-3 space-y-3">
-										{#each metric.rows as row (row.name)}
-											<div
-												class="grid grid-cols-[7.5rem_1fr] items-center gap-3 text-sm sm:grid-cols-[9rem_1fr]"
-											>
-												<dt class="truncate text-muted">{row.name}</dt>
-												<dd class="flex items-center gap-3">
+					<p class="mt-2 text-sm text-muted">
+						{m.compareSize()} <span aria-hidden="true">·</span>
+						{m.compareLower()}
+					</p>
+					<div class="mt-6 space-y-6">
+						{#each platform.size as metric (metric.label)}
+							{@const max = Math.max(...metric.rows.map((row) => row.value))}
+							<div>
+								<p class="text-sm font-medium text-fg">{metric.label}</p>
+								<dl class="mt-3 space-y-3">
+									{#each metric.rows as row (row.name)}
+										<div
+											class="grid grid-cols-[7.5rem_1fr] items-center gap-3 text-sm sm:grid-cols-[9rem_1fr]"
+										>
+											<dt class="truncate text-muted">{row.name}</dt>
+											<dd class="flex items-center gap-3">
+												<span class="block h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-line">
 													<span
-														class="block h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-line"
-													>
-														<span
-															class={`block h-full rounded-full ${row.ours ? 'bg-rust-600 dark:bg-rust-400' : 'bg-bar-other'}`}
-															style={`width: ${(row.value / max) * 100}%`}
-														></span>
-													</span>
-													<span class="w-20 shrink-0 text-right font-mono tabular-nums">
-														<span class="block">{row.text}</span>
-														{#if row.detail}
-															<span
-																class="mt-0.5 block text-[10px] leading-tight whitespace-nowrap text-subtle"
-																>{row.detail}</span
-															>
-														{/if}
-													</span>
-												</dd>
-											</div>
-										{/each}
-									</dl>
-								</div>
-							{/each}
-						</div>
-						<div class="bg-bg p-6 sm:p-8">
-							<h4 class="text-[18px]">{m.compareMemory()}</h4>
-							<p class="mt-1 text-sm text-muted">{m.compareLower()}</p>
-							{#each platform.memory as metric (metric.label)}
-								{@const max = Math.max(...metric.rows.map((row) => row.value))}
-								<div class="mt-6">
-									<p class="text-sm font-medium text-fg">{metric.label}</p>
-									<dl class="mt-3 space-y-3">
-										{#each metric.rows as row (row.name)}
-											<div
-												class="grid grid-cols-[7.5rem_1fr] items-center gap-3 text-sm sm:grid-cols-[9rem_1fr]"
-											>
-												<dt class="truncate text-muted">{row.name}</dt>
-												<dd class="flex items-center gap-3">
-													<span
-														class="block h-2 min-w-0 flex-1 overflow-hidden rounded-full bg-line"
-													>
-														<span
-															class={`block h-full rounded-full ${row.ours ? 'bg-rust-600 dark:bg-rust-400' : 'bg-bar-other'}`}
-															style={`width: ${(row.value / max) * 100}%`}
-														></span>
-													</span>
-													<span class="w-20 shrink-0 text-right font-mono tabular-nums">
-														<span class="block">{row.text}</span>
-														{#if row.detail}
-															<span
-																class="mt-0.5 block text-[10px] leading-tight whitespace-nowrap text-subtle"
-																>{row.detail}</span
-															>
-														{/if}
-													</span>
-												</dd>
-											</div>
-										{/each}
-									</dl>
-								</div>
-							{/each}
-							<p class="mt-6 text-sm leading-relaxed text-muted">{platform.memoryNote}</p>
-						</div>
-					</div>
-					<div
-						class="mt-6 max-w-3xl rounded-xl border border-line p-4 text-xs leading-relaxed text-muted"
-					>
-						<p class="font-medium text-fg">{m.compareMethodTitle()}</p>
-						<p class="mt-1">{platform.method}</p>
+														class={`block h-full rounded-full ${row.ours ? 'bg-rust-600 dark:bg-rust-400' : 'bg-bar-other'}`}
+														style={`width: ${(row.value / max) * 100}%`}
+													></span>
+												</span>
+												<span class="w-20 shrink-0 text-right font-mono tabular-nums">
+													{row.text}
+												</span>
+											</dd>
+										</div>
+									{/each}
+								</dl>
+							</div>
+						{/each}
 					</div>
 				</section>
 			{/each}
 		</div>
+
+		<p class="mt-6 max-w-3xl text-sm leading-relaxed text-muted">{m.compareMethodSummary()}</p>
 
 		<p class="mt-8 max-w-3xl text-sm leading-relaxed text-muted">
 			{m.compareOfficial()}

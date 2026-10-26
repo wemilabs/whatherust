@@ -45,6 +45,7 @@ pub fn run() {
 
             #[cfg(target_os = "macos")]
             migrate_legacy_webkit_data(
+                &data_dir,
                 &app.path().home_dir()?.join("Library"),
                 &app.config().identifier,
                 &app.package_info().name,
@@ -176,28 +177,52 @@ fn move_legacy(from: &Path, to: &Path) -> bool {
 }
 
 #[cfg(target_os = "macos")]
-fn migrate_legacy_webkit_data(library: &Path, identifier: &str, app_name: &str) {
-    let webkit = library.join("WebKit");
-    if !move_legacy(&webkit.join(LEGACY_IDENTIFIER), &webkit.join(identifier)) {
+fn migrate_legacy_webkit_data(data_dir: &Path, library: &Path, identifier: &str, app_name: &str) {
+    // Once set, a legacy folder recreated by the old app must never replace this app's session.
+    let marker = data_dir.join(".legacy-migrated");
+    let mark_migrated = || {
+        let _ = std::fs::create_dir_all(data_dir);
+        let _ = std::fs::File::create(&marker);
+    };
+    if marker.exists() {
         return;
     }
-
+    let webkit = library.join("WebKit");
     let cookies = library.join("HTTPStorages");
+    let legacy = webkit.join(LEGACY_IDENTIFIER);
+    if !legacy.exists() {
+        mark_migrated();
+        return;
+    }
+    // Move the key first; discard leftover new stores only after success so denied prompts retry next launch.
+    if !move_webcrypto_master_key(identifier, app_name) {
+        return;
+    }
+    let current = webkit.join(identifier);
+    let _ = std::fs::remove_dir_all(&current);
+    let _ = std::fs::remove_file(cookies.join(format!("{identifier}.binarycookies")));
+    let _ = std::fs::remove_dir_all(cookies.join(identifier));
+    if !move_legacy(&legacy, &current) {
+        return;
+    }
+    mark_migrated();
+
     move_legacy(
         &cookies.join(format!("{LEGACY_IDENTIFIER}.binarycookies")),
         &cookies.join(format!("{identifier}.binarycookies")),
     );
     move_legacy(&cookies.join(LEGACY_IDENTIFIER), &cookies.join(identifier));
-    move_webcrypto_master_key(identifier, app_name);
 }
 
-/// WebKit wraps stored CryptoKeys with this per-bundle-id keychain item; without it, moved IndexedDB keys cannot be unwrapped.
+/// WebKit wraps stored CryptoKeys with this per-bundle-id item; moved IndexedDB keys need it to be unwrapped.
 #[cfg(target_os = "macos")]
-fn move_webcrypto_master_key(identifier: &str, app_name: &str) {
+fn move_webcrypto_master_key(identifier: &str, app_name: &str) -> bool {
     use core_foundation::data::CFData;
     use security_framework::item::{
         ItemAddOptions, ItemAddValue, ItemClass, ItemSearchOptions, Location, SearchResult,
     };
+
+    const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
     let old_account = format!("com.apple.WebKit.WebCrypto.master+{LEGACY_IDENTIFIER}");
     let mut old_search = ItemSearchOptions::new();
@@ -206,11 +231,15 @@ fn move_webcrypto_master_key(identifier: &str, app_name: &str) {
         .account(&old_account)
         .load_data(true)
         .limit(1);
-    let Ok(mut old_items) = old_search.search() else {
-        return;
+    let mut old_items = match old_search.search() {
+        Ok(items) => items,
+        Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => return true,
+        Err(_) => return false,
     };
-    let Some(SearchResult::Data(data)) = old_items.pop() else {
-        return;
+    let data = match old_items.pop() {
+        None => return true,
+        Some(SearchResult::Data(data)) => data,
+        Some(_) => return false,
     };
 
     let new_account = format!("com.apple.WebKit.WebCrypto.master+{identifier}");
@@ -229,13 +258,17 @@ fn move_webcrypto_master_key(identifier: &str, app_name: &str) {
         .set_account_name(&new_account)
         .set_label(format!("{app_name} WebCrypto Master Key"))
         .set_location(Location::DefaultFileKeychain);
-    if new_item.add().is_ok() {
-        let mut old_delete = ItemSearchOptions::new();
-        old_delete
-            .class(ItemClass::generic_password())
-            .account(&old_account);
-        let _ = old_delete.delete();
+    if new_item.add().is_err() {
+        return false;
     }
+
+    let mut old_delete = ItemSearchOptions::new();
+    old_delete
+        .class(ItemClass::generic_password())
+        .account(&old_account);
+    // Best effort: another signer's item can refuse deletion (errSecInvalidOwnerEdit); the keys it wraps moved with the folder.
+    let _ = old_delete.delete();
+    true
 }
 
 #[cfg(target_os = "windows")]

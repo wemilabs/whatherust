@@ -39,7 +39,7 @@
       const settings = options || {};
       nextId = (nextId % 0x7ffffffe) + 1;
       const id = nextId;
-      internals.set(this, { id, listened: false });
+      internals.set(this, { id, closed: false, clickListeners: new Set() });
 
       this.title = String(title);
       this.body = settings.body === undefined ? "" : String(settings.body);
@@ -61,12 +61,22 @@
     }
 
     addEventListener(type, listener, options) {
-      if (type === "click" && listener) internals.get(this).listened = true;
+      if (type === "click" && listener) internals.get(this).clickListeners.add(listener);
       super.addEventListener(type, listener, options);
     }
 
+    removeEventListener(type, listener, options) {
+      if (type === "click") internals.get(this).clickListeners.delete(listener);
+      super.removeEventListener(type, listener, options);
+    }
+
+    // The plugin can't dismiss desktop toasts, so stay tracked: a click on the lingering toast
+    // should still open the chat.
     close() {
-      if (shown.delete(internals.get(this).id)) fire(this, "close");
+      const state = internals.get(this);
+      if (state.closed) return;
+      state.closed = true;
+      fire(this, "close");
     }
 
     static get permission() {
@@ -93,10 +103,11 @@
       if (!notification) return;
       shown.delete(id);
       window.focus();
-      const handled = typeof notification.onclick === "function" || internals.get(notification).listened;
+      const handled =
+        typeof notification.onclick === "function" || internals.get(notification).clickListeners.size > 0;
       fire(notification, "click");
       if (!handled) openChatTitled(notification.title);
-      fire(notification, "close");
+      notification.close();
     },
   });
 

@@ -1,5 +1,7 @@
 <script lang="ts">
+	import { browser, dev } from '$app/env';
 	import { page } from '$app/state';
+	import { inject, pageview } from '@vercel/analytics';
 	import { m } from '#lib/paraglide/messages.js';
 	import { baseLocale, getLocale, locales, localizeHref } from '#lib/paraglide/runtime.js';
 	import { SITE_URL } from '#lib/site.js';
@@ -9,6 +11,23 @@
 	import '@fontsource-variable/geist-mono';
 	import './layout.css';
 	import type { LayoutProps } from './$types';
+
+	// `@vercel/analytics/sveltekit` subscribes to `$app/stores`, which SvelteKit 3 removed.
+	if (browser) {
+		inject(
+			{
+				mode: dev ? 'development' : 'production',
+				framework: 'sveltekit',
+				disableAutoTrack: true,
+				basePath: import.meta.env.VITE_VERCEL_OBSERVABILITY_BASEPATH
+			},
+			import.meta.env.VITE_VERCEL_OBSERVABILITY_CLIENT_CONFIG
+		);
+	}
+
+	$effect(() => {
+		if (page.route.id) pageview({ route: page.route.id, path: page.url.pathname });
+	});
 
 	let { children, data }: LayoutProps = $props();
 

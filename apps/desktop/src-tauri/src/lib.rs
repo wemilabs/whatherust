@@ -437,7 +437,16 @@ async fn show_update_dialog(app: &AppHandle, message: String, kind: UpdateDialog
                 dialog.destroy();
             }
         });
-        dialog.present();
+        dialog.add_events(gtk::gdk::EventMask::PROPERTY_CHANGE_MASK);
+        dialog.realize();
+        if let Some(window) = dialog
+            .window()
+            .and_then(|window| window.downcast::<gdkx11::X11Window>().ok())
+        {
+            dialog.present_with_time(gdkx11::functions::x11_get_server_time(&window));
+        } else {
+            dialog.present();
+        }
     });
     receiver.await.unwrap_or(false)
 }

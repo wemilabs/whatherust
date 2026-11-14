@@ -45,7 +45,7 @@
       const settings = options || {};
       nextId = (nextId % 0x7ffffffe) + 1;
       const id = nextId;
-      internals.set(this, { id, closed: false, clickListeners: [new Set(), new Set()] });
+      internals.set(this, { id, closed: false, clickListeners: [new Map(), new Map()] });
 
       this.title = String(title);
       this.body = settings.body === undefined ? "" : String(settings.body);
@@ -67,12 +67,37 @@
     }
 
     addEventListener(type, listener, options) {
-      if (type === "click" && listener) internals.get(this).clickListeners[+isCapture(options)].add(listener);
-      super.addEventListener(type, listener, options);
+      if (type !== "click" || !listener) {
+        super.addEventListener(type, listener, options);
+        return;
+      }
+      const capture = isCapture(options);
+      const listeners = internals.get(this).clickListeners[+capture];
+      const signal = options?.signal;
+      if (listeners.has(listener) || signal?.aborted) return;
+      const once = Boolean(options && options.once);
+      const wrapped = (event) => {
+        if (once) this.removeEventListener(type, listener, capture);
+        if (typeof listener === "function") listener.call(this, event);
+        else listener.handleEvent(event);
+      };
+      const abort = () => this.removeEventListener(type, listener, capture);
+      super.addEventListener(type, wrapped, options);
+      listeners.set(listener, { wrapped, signal, abort });
+      signal?.addEventListener("abort", abort, { once: true });
     }
 
     removeEventListener(type, listener, options) {
-      if (type === "click") internals.get(this).clickListeners[+isCapture(options)].delete(listener);
+      if (type === "click") {
+        const listeners = internals.get(this).clickListeners[+isCapture(options)];
+        const registration = listeners.get(listener);
+        if (registration) {
+          listeners.delete(listener);
+          registration.signal?.removeEventListener("abort", registration.abort);
+          super.removeEventListener(type, registration.wrapped, { capture: isCapture(options) });
+          return;
+        }
+      }
       super.removeEventListener(type, listener, options);
     }
 
@@ -87,6 +112,10 @@
 
     static get permission() {
       return Polyfill.permission;
+    }
+
+    static set permission(value) {
+      Polyfill.permission = value;
     }
 
     static requestPermission(callback) {

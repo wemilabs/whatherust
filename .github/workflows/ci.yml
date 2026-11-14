@@ -52,4 +52,5 @@ jobs:
           node-version: '24'
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @whatherust/desktop --if-present check
       - run: pnpm turbo run check lint build --filter=@whatherust/web

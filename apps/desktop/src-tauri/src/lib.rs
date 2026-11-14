@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use tauri::{
@@ -44,6 +45,7 @@ pub fn run() {
                 .find(|config| config.label == "main")
                 .ok_or("missing main window configuration")?;
             let app_handle = app.handle().clone();
+            let shown_count = Arc::new(AtomicU32::new(0));
 
             if !cfg!(debug_assertions) {
                 tauri::async_runtime::spawn(check_for_update(app.handle().clone()));
@@ -84,7 +86,7 @@ pub fn run() {
                     }
                 })
                 .on_document_title_changed({
-                    let shown_count = AtomicU32::new(0);
+                    let shown_count = shown_count.clone();
                     move |window, title| {
                         if let Some(tray) = window.app_handle().tray_by_id("main") {
                             let _ = tray.set_tooltip(Some(title.replace("WhatsApp", "WhatheRust")));
@@ -123,6 +125,12 @@ pub fn run() {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
                     let _ = close_window.hide();
+                }
+                // Windows discards the taskbar overlay when its button disappears on hide.
+                // Reapply on focus so restoring also refreshes an unchanged count.
+                #[cfg(target_os = "windows")]
+                if let tauri::WindowEvent::Focused(true) = event {
+                    show_unread_badge(&close_window, shown_count.load(Ordering::Relaxed));
                 }
                 #[cfg(target_os = "macos")]
                 if let tauri::WindowEvent::ThemeChanged(theme) = event {
@@ -382,15 +390,24 @@ fn show_unread_badge(window: &WebviewWindow, count: u32) {
     let _ = window.set_badge_count((count > 0).then_some(i64::from(count)));
 
     #[cfg(target_os = "windows")]
-    let _ = window.set_overlay_icon((count > 0).then(|| {
-        const SIZE: u32 = 32;
-        let mut rgba = vec![0; (SIZE * SIZE * 4) as usize];
-        draw_badge(&mut rgba, SIZE, 0, 0, SIZE, &badge_label(count));
-        tauri::image::Image::new_owned(rgba, SIZE, SIZE)
-    }));
+    {
+        let icon = (count > 0).then(|| {
+            // Render on the native 16px grid so downsampling cannot merge the glyph strokes.
+            const SIZE: u32 = 16;
+            let mut rgba = vec![0; (SIZE * SIZE * 4) as usize];
+            draw_badge(&mut rgba, SIZE, 0, 0, SIZE, &badge_label(count));
+            tauri::image::Image::new_owned(rgba, SIZE, SIZE)
+        });
+        let _ = window.set_overlay_icon(icon.clone());
+        if let Some(tray) = window.app_handle().tray_by_id("main") {
+            // The Windows tray is only 16px: use the whole icon for a readable count.
+            let icon = icon.or_else(|| window.app_handle().default_window_icon().cloned());
+            let _ = tray.set_icon(icon);
+        }
+    }
 
     // The macOS menu bar icon is a monochrome template, so the Dock badge carries the count there.
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     if let (Some(tray), Some(icon)) = (
         window.app_handle().tray_by_id("main"),
         window.app_handle().default_window_icon(),

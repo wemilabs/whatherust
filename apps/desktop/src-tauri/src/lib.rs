@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use tauri::{
     AppHandle, Manager, WebviewWindow, WebviewWindowBuilder,
@@ -8,13 +10,107 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::NewWindowResponse,
 };
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
+use tauri_plugin_dialog::MessageDialogKind;
+#[cfg(not(target_os = "linux"))]
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 
 mod settings;
 
 const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum UpdateCheck {
+    Automatic,
+    Manual,
+}
+
+enum UpdateDialog {
+    Message(MessageDialogKind),
+    Install,
+}
+
+#[derive(Default)]
+struct UpdateState {
+    activity: Mutex<UpdateActivity>,
+    dismissed: Mutex<Option<String>>,
+}
+
+#[derive(Default)]
+enum UpdateActivity {
+    #[default]
+    Idle,
+    Checking(UpdateCheck),
+    Reporting(UpdateCheck),
+}
+
+impl UpdateState {
+    fn begin(&self, kind: UpdateCheck) -> Option<UpdateBusyGuard<'_>> {
+        let mut activity = self.activity.lock().unwrap();
+        match &mut *activity {
+            UpdateActivity::Idle => {
+                *activity = UpdateActivity::Checking(kind);
+                Some(UpdateBusyGuard {
+                    state: self,
+                    active: true,
+                })
+            }
+            UpdateActivity::Checking(current) => {
+                if kind == UpdateCheck::Manual {
+                    *current = UpdateCheck::Manual;
+                }
+                None
+            }
+            UpdateActivity::Reporting(_) => None,
+        }
+    }
+
+    fn should_report(&self, show_automatically: bool) -> bool {
+        let mut activity = self.activity.lock().unwrap();
+        match *activity {
+            UpdateActivity::Checking(kind) | UpdateActivity::Reporting(kind)
+                if show_automatically || kind == UpdateCheck::Manual =>
+            {
+                *activity = UpdateActivity::Reporting(kind);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn should_prompt(&self, version: &str) -> bool {
+        let show_automatically = self.dismissed.lock().unwrap().as_deref() != Some(version);
+        self.should_report(show_automatically)
+    }
+}
+
+struct UpdateBusyGuard<'a> {
+    state: &'a UpdateState,
+    active: bool,
+}
+
+impl UpdateBusyGuard<'_> {
+    fn retry_manual(&mut self) -> bool {
+        let mut activity = self.state.activity.lock().unwrap();
+        // A manual request may arrive after a silent result was decided.
+        if matches!(*activity, UpdateActivity::Checking(UpdateCheck::Manual)) {
+            return true;
+        }
+        *activity = UpdateActivity::Idle;
+        self.active = false;
+        false
+    }
+}
+
+impl Drop for UpdateBusyGuard<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            *self.state.activity.lock().unwrap() = UpdateActivity::Idle;
+        }
+    }
+}
 const NOTIFICATION_GATE: &str = include_str!("notification-gate.js");
 
 #[cfg(target_os = "linux")]
@@ -41,6 +137,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            app.manage(UpdateState::default());
             let window_config = app
                 .config()
                 .app
@@ -52,7 +149,13 @@ pub fn run() {
             let shown_count = Arc::new(AtomicU32::new(0));
 
             if !cfg!(debug_assertions) {
-                tauri::async_runtime::spawn(check_for_update(app.handle().clone()));
+                let update_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        check_for_update(update_handle.clone(), UpdateCheck::Automatic).await;
+                        tokio::time::sleep(UPDATE_CHECK_INTERVAL).await;
+                    }
+                });
             }
 
             let data_dir = app.path().app_local_data_dir()?;
@@ -160,12 +263,27 @@ pub fn run() {
             });
 
             let show_item = MenuItem::with_id(app, "show", "Show WhatheRust", true, None::<&str>)?;
+            let check_updates_item = MenuItem::with_id(
+                app,
+                "check_updates",
+                "Check for updates…",
+                true,
+                None::<&str>,
+            )?;
             let settings_item =
                 MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu =
-                Menu::with_items(app, &[&show_item, &settings_item, &separator, &quit_item])?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &show_item,
+                    &settings_item,
+                    &check_updates_item,
+                    &separator,
+                    &quit_item,
+                ],
+            )?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main")
                 .tooltip("WhatheRust")
@@ -188,6 +306,12 @@ pub fn run() {
                 })
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show_main_window(app),
+                    "check_updates" => {
+                        tauri::async_runtime::spawn(check_for_update(
+                            app.clone(),
+                            UpdateCheck::Manual,
+                        ));
+                    }
                     "settings" => open_settings_window(app),
                     "quit" => app.exit(0),
                     _ => {}
@@ -228,39 +352,160 @@ pub fn run() {
         });
 }
 
-async fn check_for_update(app: AppHandle) {
-    async fn check(app: &AppHandle) -> tauri_plugin_updater::Result<()> {
+async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
+    let state = app.state::<UpdateState>();
+    let Some(mut busy) = state.begin(kind) else {
+        return;
+    };
+
+    async fn check(app: &AppHandle, state: &UpdateState) -> tauri_plugin_updater::Result<()> {
         let Some(update) = app.updater()?.check().await? else {
+            if state.should_report(false) {
+                show_update_message(
+                    app,
+                    format!(
+                        "WhatheRust {} is the latest version.",
+                        app.package_info().version
+                    ),
+                    MessageDialogKind::Info,
+                )
+                .await;
+            }
             return Ok(());
         };
-        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let version = update.version.clone();
+        if !state.should_prompt(&version) {
+            return Ok(());
+        }
 
-        app.dialog()
-            .message(format!(
+        if show_update_dialog(
+            app,
+            format!(
                 "WhatheRust {} is available. Install it now? The app will restart.",
                 update.version
-            ))
-            .title("WhatheRust update")
-            .buttons(MessageDialogButtons::OkCancelCustom(
-                "Install".into(),
-                "Later".into(),
-            ))
-            .show_with_result(move |result| {
-                let _ = sender.send(result);
-            });
-
-        if matches!(
-            receiver.await,
-            Ok(MessageDialogResult::Custom(button)) if button == "Install"
-        ) {
+            ),
+            UpdateDialog::Install,
+        )
+        .await
+        {
             update.download_and_install(|_, _| {}, || {}).await?;
             app.restart();
+        } else {
+            *state.dismissed.lock().unwrap() = Some(version);
         }
 
         Ok(())
     }
 
-    let _ = check(&app).await;
+    loop {
+        if let Err(error) = check(&app, &state).await
+            && state.should_report(false)
+        {
+            show_update_message(
+                &app,
+                format!("Could not check for updates: {error}"),
+                MessageDialogKind::Error,
+            )
+            .await;
+        }
+        if !busy.retry_manual() {
+            break;
+        }
+    }
+}
+
+async fn show_update_message(app: &AppHandle, message: String, kind: MessageDialogKind) {
+    show_update_dialog(app, message, UpdateDialog::Message(kind)).await;
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn show_update_dialog(app: &AppHandle, message: String, kind: UpdateDialog) -> bool {
+    show_main_window(app);
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let mut dialog = app.dialog().message(message).title("WhatheRust update");
+    dialog = match kind {
+        UpdateDialog::Message(kind) => dialog.kind(kind),
+        UpdateDialog::Install => dialog.buttons(MessageDialogButtons::OkCancelCustom(
+            "Install".into(),
+            "Later".into(),
+        )),
+    };
+    if let Some(window) = app.get_webview_window("main") {
+        dialog = dialog.parent(&window);
+    }
+    dialog.show(move |confirmed| {
+        let _ = sender.send(confirmed);
+    });
+    receiver.await.unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+async fn show_update_dialog(app: &AppHandle, message: String, kind: UpdateDialog) -> bool {
+    use gtk::prelude::*;
+    use std::{cell::Cell, rc::Rc};
+
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window("main") else {
+            return;
+        };
+        let Ok(parent) = window.gtk_window() else {
+            return;
+        };
+        show_main_window(&handle);
+        // rfd's GTK message backend ignores the plugin's parent window.
+        let dialog = gtk::MessageDialog::builder()
+            .transient_for(&parent)
+            .modal(true)
+            .destroy_with_parent(true)
+            .title("WhatheRust update")
+            .text(message)
+            .message_type(match &kind {
+                UpdateDialog::Message(MessageDialogKind::Error) => gtk::MessageType::Error,
+                UpdateDialog::Message(MessageDialogKind::Warning) => gtk::MessageType::Warning,
+                _ => gtk::MessageType::Info,
+            })
+            .build();
+        match kind {
+            UpdateDialog::Install => {
+                dialog.add_button("Later", gtk::ResponseType::Cancel);
+                dialog.add_button("Install", gtk::ResponseType::Ok);
+                dialog.set_default_response(gtk::ResponseType::Cancel);
+            }
+            UpdateDialog::Message(_) => {
+                dialog.add_button("OK", gtk::ResponseType::Ok);
+            }
+        }
+        let confirmed = Rc::new(Cell::new(false));
+        let result = confirmed.clone();
+        let sender = Cell::new(Some(sender));
+        dialog.connect_destroy(move |_| {
+            if let Some(sender) = sender.take() {
+                let _ = sender.send(result.get());
+            }
+        });
+        dialog.connect_response(move |dialog, response| {
+            confirmed.set(response == gtk::ResponseType::Ok);
+            unsafe {
+                // This dialog is no longer used after destruction.
+                dialog.destroy();
+            }
+        });
+        dialog.add_events(gtk::gdk::EventMask::PROPERTY_CHANGE_MASK);
+        dialog.realize();
+        if let Some(window) = dialog
+            .window()
+            .and_then(|window| window.downcast::<gdkx11::X11Window>().ok())
+        {
+            let timestamp = gdkx11::functions::x11_get_server_time(&window);
+            window.set_user_time(timestamp);
+            dialog.present_with_time(timestamp);
+        } else {
+            dialog.present();
+        }
+    });
+    receiver.await.unwrap_or(false)
 }
 
 /// Moves data left by builds made before the app identifier was renamed.
@@ -563,6 +808,27 @@ fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
+        #[cfg(target_os = "linux")]
+        let _ = app.run_on_main_thread(move || {
+            use gtk::prelude::*;
+
+            if let Ok(gtk_window) = window.gtk_window() {
+                gtk_window.add_events(gtk::gdk::EventMask::PROPERTY_CHANGE_MASK);
+                gtk_window.realize();
+                if let Some(x11_window) = gtk_window
+                    .window()
+                    .and_then(|window| window.downcast::<gdkx11::X11Window>().ok())
+                {
+                    // D-Bus activation has no fresh GDK event timestamp.
+                    let timestamp = gdkx11::functions::x11_get_server_time(&x11_window);
+                    x11_window.set_user_time(timestamp);
+                    gtk_window.present_with_time(timestamp);
+                    return;
+                }
+            }
+            let _ = window.set_focus();
+        });
+        #[cfg(not(target_os = "linux"))]
         let _ = window.set_focus();
     }
 }
@@ -615,7 +881,119 @@ fn toggle_main_window(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{badge_label, draw_badge, is_allowed_url, unread_count};
+    use super::{UpdateCheck, UpdateState, badge_label, draw_badge, is_allowed_url, unread_count};
+
+    #[test]
+    fn automatic_checks_respect_dismissed_versions() {
+        let state = UpdateState::default();
+        *state.dismissed.lock().unwrap() = Some("2.0.0".into());
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(!state.should_prompt("2.0.0"));
+        assert!(state.should_prompt("2.0.1"));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn manual_checks_can_prompt_for_dismissed_versions() {
+        let state = UpdateState::default();
+        *state.dismissed.lock().unwrap() = Some("2.0.0".into());
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(!state.should_prompt("2.0.0"));
+        assert!(state.begin(UpdateCheck::Manual).is_none());
+        assert!(state.should_prompt("2.0.0"));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn automatic_checks_can_finish_silently() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(!state.should_report(false));
+        assert!(!busy.retry_manual());
+        assert!(state.begin(UpdateCheck::Manual).is_some());
+    }
+
+    #[test]
+    fn manual_checks_always_report_results() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Manual).unwrap();
+
+        assert!(state.should_report(false));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn manual_requests_upgrade_an_automatic_check() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(state.begin(UpdateCheck::Manual).is_none());
+        assert!(state.begin(UpdateCheck::Automatic).is_none());
+        assert!(state.should_report(false));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn manual_requests_after_a_silent_result_are_retried() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(!state.should_report(false));
+        assert!(state.begin(UpdateCheck::Manual).is_none());
+        assert!(busy.retry_manual());
+        assert!(state.should_report(false));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn requests_during_a_dialog_do_not_start_another_check() {
+        for kind in [UpdateCheck::Automatic, UpdateCheck::Manual] {
+            let state = UpdateState::default();
+            let mut busy = state.begin(kind).unwrap();
+
+            assert!(state.should_report(true));
+            assert!(state.begin(UpdateCheck::Manual).is_none());
+            assert!(state.begin(UpdateCheck::Automatic).is_none());
+            assert!(!busy.retry_manual());
+        }
+    }
+
+    #[test]
+    fn manual_feedback_is_preserved_if_installation_fails() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(state.begin(UpdateCheck::Manual).is_none());
+        assert!(state.should_report(true));
+        assert!(state.should_report(false));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn dropping_a_finished_guard_does_not_clear_a_new_check() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+        assert!(!busy.retry_manual());
+
+        let next = state.begin(UpdateCheck::Manual).unwrap();
+        drop(busy);
+        assert!(state.begin(UpdateCheck::Automatic).is_none());
+        drop(next);
+        assert!(state.begin(UpdateCheck::Automatic).is_some());
+    }
+
+    #[test]
+    fn dropping_an_active_guard_allows_another_check() {
+        let state = UpdateState::default();
+        let busy = state.begin(UpdateCheck::Automatic).unwrap();
+        assert!(state.begin(UpdateCheck::Automatic).is_none());
+
+        drop(busy);
+        assert!(state.begin(UpdateCheck::Manual).is_some());
+    }
 
     #[test]
     fn parses_the_unread_count_prefix() {

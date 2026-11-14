@@ -3,6 +3,7 @@
   "license": "MIT",
   "private": true,
   "scripts": {
+    "check": "node --test src-tauri/*.test.cjs",
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build"

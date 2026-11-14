@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use tauri::{
     AppHandle, Manager, WebviewWindow, WebviewWindowBuilder,
-    menu::{Menu, MenuItem},
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::NewWindowResponse,
 };
@@ -12,7 +12,10 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 
+mod settings;
+
 const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
+const NOTIFICATION_GATE: &str = include_str!("notification-gate.js");
 
 #[cfg(target_os = "linux")]
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
@@ -26,6 +29,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
+        .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -53,6 +57,14 @@ pub fn run() {
 
             let data_dir = app.path().app_local_data_dir()?;
             move_legacy(&data_dir.with_file_name(LEGACY_IDENTIFIER), &data_dir);
+            app.manage(settings::SettingsStore::load(
+                data_dir.join("settings.json"),
+            ));
+            let settings = app.state::<settings::SettingsStore>().get();
+            // Re-register moved apps and remove stale entries when disabled.
+            if let Err(error) = settings::apply_autostart(app.handle(), settings.start_on_login) {
+                eprintln!("failed to reconcile autostart setting: {error}");
+            }
 
             #[cfg(target_os = "macos")]
             let migration_pending = !migrate_legacy_webkit_data(
@@ -65,6 +77,7 @@ pub fn run() {
             let builder = WebviewWindowBuilder::from_config(app.handle(), window_config)?
                 // macOS ignores this override; WKWebView persists by bundle identifier.
                 .data_directory(data_dir.join("webview"))
+                .initialization_script(NOTIFICATION_GATE)
                 // WhatsApp Web rejects or degrades WebKit user agents.
                 .user_agent(USER_AGENT)
                 .on_navigation({
@@ -123,8 +136,16 @@ pub fn run() {
             let close_window = window.clone();
             window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = close_window.hide();
+                    if close_window
+                        .state::<settings::SettingsStore>()
+                        .get()
+                        .close_to_tray
+                    {
+                        api.prevent_close();
+                        let _ = close_window.hide();
+                    } else {
+                        close_window.app_handle().exit(0);
+                    }
                 }
                 // Windows discards the taskbar overlay when its button disappears on hide.
                 // Reapply on focus so restoring also refreshes an unchanged count.
@@ -139,8 +160,12 @@ pub fn run() {
             });
 
             let show_item = MenuItem::with_id(app, "show", "Show WhatheRust", true, None::<&str>)?;
+            let settings_item =
+                MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+            let separator = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let menu =
+                Menu::with_items(app, &[&show_item, &settings_item, &separator, &quit_item])?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main")
                 .tooltip("WhatheRust")
@@ -163,6 +188,7 @@ pub fn run() {
                 })
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show_main_window(app),
+                    "settings" => open_settings_window(app),
                     "quit" => app.exit(0),
                     _ => {}
                 });
@@ -180,6 +206,11 @@ pub fn run() {
 
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            settings::get_settings,
+            settings::set_settings,
+            settings::show_notification
+        ])
         .build(tauri::generate_context!())
         .expect("error while building WhatheRust")
         .run(|app, event| {
@@ -533,6 +564,42 @@ fn show_main_window(app: &AppHandle) {
         let _ = window.show();
         let _ = window.unminimize();
         let _ = window.set_focus();
+    }
+}
+
+fn open_settings_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("settings") {
+        if let Err(error) = window.show() {
+            eprintln!("failed to show settings window: {error}");
+        }
+        if let Err(error) = window.unminimize() {
+            eprintln!("failed to unminimize settings window: {error}");
+        }
+        if let Err(error) = window.set_focus() {
+            eprintln!("failed to focus settings window: {error}");
+        }
+        return;
+    }
+
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == "settings")
+    else {
+        eprintln!("missing settings window configuration");
+        return;
+    };
+
+    match WebviewWindowBuilder::from_config(app, config).and_then(|builder| builder.build()) {
+        Ok(window) => {
+            #[cfg(target_os = "windows")]
+            round_corners(&window);
+            #[cfg(not(target_os = "windows"))]
+            let _ = window;
+        }
+        Err(error) => eprintln!("failed to create settings window: {error}"),
     }
 }
 

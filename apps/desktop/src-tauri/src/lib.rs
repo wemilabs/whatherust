@@ -8,9 +8,9 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::NewWindowResponse,
 };
-use tauri_plugin_dialog::{
-    DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult,
-};
+use tauri_plugin_dialog::MessageDialogKind;
+#[cfg(not(target_os = "linux"))]
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 
@@ -21,6 +21,11 @@ const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 enum UpdateCheck {
     Automatic,
     Manual,
+}
+
+enum UpdateDialog {
+    Message(MessageDialogKind),
+    Install,
 }
 
 #[derive(Default)]
@@ -318,26 +323,16 @@ async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
             return Ok(());
         }
 
-        let (sender, receiver) = tokio::sync::oneshot::channel();
-
-        app.dialog()
-            .message(format!(
+        if show_update_dialog(
+            app,
+            format!(
                 "WhatheRust {} is available. Install it now? The app will restart.",
                 update.version
-            ))
-            .title("WhatheRust update")
-            .buttons(MessageDialogButtons::OkCancelCustom(
-                "Install".into(),
-                "Later".into(),
-            ))
-            .show_with_result(move |result| {
-                let _ = sender.send(result);
-            });
-
-        if matches!(
-            receiver.await,
-            Ok(MessageDialogResult::Custom(button)) if button == "Install"
-        ) {
+            ),
+            UpdateDialog::Install,
+        )
+        .await
+        {
             update.download_and_install(|_, _| {}, || {}).await?;
             app.restart();
         } else {
@@ -364,28 +359,35 @@ async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
 async fn show_update_message(app: &AppHandle, message: String, kind: MessageDialogKind) {
+    show_update_dialog(app, message, UpdateDialog::Message(kind)).await;
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn show_update_dialog(app: &AppHandle, message: String, kind: UpdateDialog) -> bool {
     show_main_window(app);
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    let mut dialog = app
-        .dialog()
-        .message(message)
-        .title("WhatheRust update")
-        .kind(kind);
+    let mut dialog = app.dialog().message(message).title("WhatheRust update");
+    dialog = match kind {
+        UpdateDialog::Message(kind) => dialog.kind(kind),
+        UpdateDialog::Install => dialog.buttons(MessageDialogButtons::OkCancelCustom(
+            "Install".into(),
+            "Later".into(),
+        )),
+    };
     if let Some(window) = app.get_webview_window("main") {
         dialog = dialog.parent(&window);
     }
-    dialog.show(move |_| {
-        let _ = sender.send(());
+    dialog.show(move |confirmed| {
+        let _ = sender.send(confirmed);
     });
-    let _ = receiver.await;
+    receiver.await.unwrap_or(false)
 }
 
 #[cfg(target_os = "linux")]
-async fn show_update_message(app: &AppHandle, message: String, kind: MessageDialogKind) {
+async fn show_update_dialog(app: &AppHandle, message: String, kind: UpdateDialog) -> bool {
     use gtk::prelude::*;
-    use std::cell::RefCell;
+    use std::{cell::Cell, rc::Rc};
 
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let handle = app.clone();
@@ -404,26 +406,40 @@ async fn show_update_message(app: &AppHandle, message: String, kind: MessageDial
             .destroy_with_parent(true)
             .title("WhatheRust update")
             .text(message)
-            .message_type(match kind {
-                MessageDialogKind::Error => gtk::MessageType::Error,
-                MessageDialogKind::Warning => gtk::MessageType::Warning,
+            .message_type(match &kind {
+                UpdateDialog::Message(MessageDialogKind::Error) => gtk::MessageType::Error,
+                UpdateDialog::Message(MessageDialogKind::Warning) => gtk::MessageType::Warning,
                 _ => gtk::MessageType::Info,
             })
-            .buttons(gtk::ButtonsType::Ok)
             .build();
-        let sender = RefCell::new(Some(sender));
+        match kind {
+            UpdateDialog::Install => {
+                dialog.add_button("Later", gtk::ResponseType::Cancel);
+                dialog.add_button("Install", gtk::ResponseType::Ok);
+                dialog.set_default_response(gtk::ResponseType::Cancel);
+            }
+            UpdateDialog::Message(_) => {
+                dialog.add_button("OK", gtk::ResponseType::Ok);
+            }
+        }
+        let confirmed = Rc::new(Cell::new(false));
+        let result = confirmed.clone();
+        let sender = Cell::new(Some(sender));
         dialog.connect_destroy(move |_| {
-            if let Some(sender) = sender.borrow_mut().take() {
-                let _ = sender.send(());
+            if let Some(sender) = sender.take() {
+                let _ = sender.send(result.get());
             }
         });
-        dialog.connect_response(|dialog, _| unsafe {
-            // This dialog is no longer used after destruction.
-            dialog.destroy();
+        dialog.connect_response(move |dialog, response| {
+            confirmed.set(response == gtk::ResponseType::Ok);
+            unsafe {
+                // This dialog is no longer used after destruction.
+                dialog.destroy();
+            }
         });
         dialog.present();
     });
-    let _ = receiver.await;
+    receiver.await.unwrap_or(false)
 }
 
 /// Moves data left by builds made before the app identifier was renamed.

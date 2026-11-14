@@ -412,11 +412,14 @@ async fn show_update_message(app: &AppHandle, message: String, kind: MessageDial
             .buttons(gtk::ButtonsType::Ok)
             .build();
         let sender = RefCell::new(Some(sender));
-        dialog.connect_response(move |dialog, _| {
-            dialog.close();
+        dialog.connect_destroy(move |_| {
             if let Some(sender) = sender.borrow_mut().take() {
                 let _ = sender.send(());
             }
+        });
+        dialog.connect_response(|dialog, _| unsafe {
+            // This dialog is no longer used after destruction.
+            dialog.destroy();
         });
         dialog.present();
     });

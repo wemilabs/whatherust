@@ -26,11 +26,14 @@
   const openChatTitled = (title) => {
     const pane = document.getElementById("pane-side");
     if (!pane || !title) return;
-    const label = Array.from(pane.querySelectorAll("span[title]")).find(
-      (span) => span.getAttribute("title") === title,
+    const rows = new Set(
+      Array.from(pane.querySelectorAll("span[title]"))
+        .filter((span) => span.getAttribute("title") === title)
+        .map((label) => label.closest('[role="listitem"], [role="row"], [role="gridcell"]') || label),
     );
-    const row = label && (label.closest('[role="listitem"], [role="row"], [role="gridcell"]') || label);
-    if (!row) return;
+    // Titles are not chat identifiers; ambiguous matches must remain focus-only.
+    if (rows.size !== 1) return;
+    const [row] = rows;
     for (const type of ["mousedown", "mouseup", "click"]) {
       row.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
     }

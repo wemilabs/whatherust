@@ -611,6 +611,26 @@ fn show_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
+        #[cfg(target_os = "linux")]
+        let _ = app.run_on_main_thread(move || {
+            use gtk::prelude::*;
+
+            if let Ok(gtk_window) = window.gtk_window() {
+                gtk_window.add_events(gtk::gdk::EventMask::PROPERTY_CHANGE_MASK);
+                gtk_window.realize();
+                if let Some(x11_window) = gtk_window
+                    .window()
+                    .and_then(|window| window.downcast::<gdkx11::X11Window>().ok())
+                {
+                    // D-Bus activation has no fresh GDK event timestamp.
+                    gtk_window
+                        .present_with_time(gdkx11::functions::x11_get_server_time(&x11_window));
+                    return;
+                }
+            }
+            let _ = window.set_focus();
+        });
+        #[cfg(not(target_os = "linux"))]
         let _ = window.set_focus();
     }
 }

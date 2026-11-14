@@ -100,8 +100,19 @@ The icons are generated from the SVG sources in `apps/desktop/src-tauri/icons/`:
 cd apps/desktop/src-tauri
 rsvg-convert -w 1024 -h 1024 icons/icon.svg -o /tmp/icon.png
 cargo tauri icon /tmp/icon.png -o icons
+
+# Windows uses tighter artwork bounds for its taskbar and small system-tray icons.
+rsvg-convert -w 1024 -h 1024 icons/icon-windows.svg -o /tmp/icon-windows.png
+cargo tauri icon /tmp/icon-windows.png -o /tmp/whatherust-windows-icons
+cp /tmp/whatherust-windows-icons/icon.ico icons/icon.ico
+
 rsvg-convert -w 44 -h 44 icons/tray-template.svg -o icons/tray-template.png
 ```
+
+`icon-windows.svg` references the shared `icon.svg` with a tighter, centered viewBox.
+Only copy the Windows ICO from that second generation step; the macOS and Linux
+assets keep their existing padding, and the macOS menu-bar template is unchanged.
+The desktop `check` script verifies the visible bounds of every Windows ICO frame.
 
 ## License
 

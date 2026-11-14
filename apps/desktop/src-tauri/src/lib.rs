@@ -1,7 +1,6 @@
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::{
@@ -13,12 +12,15 @@ use tauri::{
 use tauri_plugin_dialog::MessageDialogKind;
 #[cfg(not(target_os = "linux"))]
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 
 mod settings;
 
 const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
+const NOTIFICATION_GATE: &str = include_str!("notification-gate.js");
+const NOTIFICATION_CLICK_SCRIPT: &str = include_str!("notification-click.js");
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -111,7 +113,6 @@ impl Drop for UpdateBusyGuard<'_> {
         }
     }
 }
-const NOTIFICATION_GATE: &str = include_str!("notification-gate.js");
 
 #[cfg(target_os = "linux")]
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
@@ -148,6 +149,22 @@ pub fn run() {
             let app_handle = app.handle().clone();
             let shown_count = Arc::new(AtomicU32::new(0));
 
+            app.notification().on_action({
+                let app_handle = app_handle.clone();
+                move |performed| {
+                    if performed.action_id() != "tap" {
+                        return;
+                    }
+                    show_main_window(&app_handle);
+                    if let (Some(window), Some(notification)) = (
+                        app_handle.get_webview_window("main"),
+                        performed.notification(),
+                    ) {
+                        let _ = window.eval(notification_click_script(notification.id()));
+                    }
+                }
+            })?;
+
             if !cfg!(debug_assertions) {
                 let update_handle = app_handle.clone();
                 tauri::async_runtime::spawn(async move {
@@ -181,6 +198,8 @@ pub fn run() {
                 // macOS ignores this override; WKWebView persists by bundle identifier.
                 .data_directory(data_dir.join("webview"))
                 .initialization_script(NOTIFICATION_GATE)
+                // Replays native notification clicks into WhatsApp's own Notification handlers.
+                .initialization_script(NOTIFICATION_CLICK_SCRIPT)
                 // WhatsApp Web rejects or degrades WebKit user agents.
                 .user_agent(USER_AGENT)
                 .on_navigation({
@@ -263,6 +282,9 @@ pub fn run() {
             });
 
             let show_item = MenuItem::with_id(app, "show", "Show WhatheRust", true, None::<&str>)?;
+            let settings_item =
+                MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+            let separator = PredefinedMenuItem::separator(app)?;
             let check_updates_item = MenuItem::with_id(
                 app,
                 "check_updates",
@@ -270,9 +292,6 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
-            let settings_item =
-                MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
-            let separator = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
@@ -306,13 +325,13 @@ pub fn run() {
                 })
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show_main_window(app),
+                    "settings" => open_settings_window(app),
                     "check_updates" => {
                         tauri::async_runtime::spawn(check_for_update(
                             app.clone(),
                             UpdateCheck::Manual,
                         ));
                     }
-                    "settings" => open_settings_window(app),
                     "quit" => app.exit(0),
                     _ => {}
                 });
@@ -879,9 +898,60 @@ fn toggle_main_window(app: &AppHandle) {
     }
 }
 
+fn notification_click_script(id: i32) -> String {
+    format!("window.__whatherustNotificationClick?.({id})")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{UpdateCheck, UpdateState, badge_label, draw_badge, is_allowed_url, unread_count};
+    use super::{
+        NOTIFICATION_CLICK_SCRIPT, UpdateCheck, UpdateState, badge_label, draw_badge,
+        is_allowed_url, notification_click_script, unread_count,
+    };
+
+    #[test]
+    fn parses_the_unread_count_prefix() {
+        let cases = [
+            ("(3) WhatsApp", 3),
+            ("(128) WhatsApp", 128),
+            (" (1) WhatsApp", 1),
+            ("(99+) WhatsApp", 99),
+            ("WhatsApp", 0),
+            ("(0) WhatsApp", 0),
+            ("WhatsApp (3)", 0),
+            ("(abc) WhatsApp", 0),
+            ("(3 WhatsApp", 0),
+            ("", 0),
+        ];
+
+        for (title, expected) in cases {
+            assert_eq!(unread_count(title), expected, "{title}");
+        }
+    }
+
+    #[test]
+    fn caps_badge_labels_at_nine_plus() {
+        assert_eq!(badge_label(1), "1");
+        assert_eq!(badge_label(9), "9");
+        assert_eq!(badge_label(10), "9+");
+    }
+
+    #[test]
+    fn draws_a_red_badge_with_white_text_inside_its_square() {
+        const WIDTH: u32 = 32;
+        let mut rgba = vec![0; (WIDTH * WIDTH * 4) as usize];
+        draw_badge(&mut rgba, WIDTH, 12, 0, 20, "8");
+        let pixel = |x: u32, y: u32| {
+            let i = ((y * WIDTH + x) * 4) as usize;
+            [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+        };
+
+        assert_eq!(pixel(0, 0), [0; 4], "outside the badge square");
+        assert_eq!(pixel(12, 0)[3], 0, "outside the circle in its corner");
+        assert_eq!(pixel(22, 10), [255, 255, 255, 255], "centre stroke of 8");
+        assert_eq!(pixel(14, 10), [0xE5, 0x39, 0x35, 255], "badge fill");
+        assert_eq!(pixel(22, 25), [0; 4], "below the badge");
+    }
 
     #[test]
     fn automatic_checks_respect_dismissed_versions() {
@@ -996,47 +1066,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_the_unread_count_prefix() {
-        let cases = [
-            ("(3) WhatsApp", 3),
-            ("(128) WhatsApp", 128),
-            (" (1) WhatsApp", 1),
-            ("(99+) WhatsApp", 99),
-            ("WhatsApp", 0),
-            ("(0) WhatsApp", 0),
-            ("WhatsApp (3)", 0),
-            ("(abc) WhatsApp", 0),
-            ("(3 WhatsApp", 0),
-            ("", 0),
-        ];
-
-        for (title, expected) in cases {
-            assert_eq!(unread_count(title), expected, "{title}");
-        }
-    }
-
-    #[test]
-    fn caps_badge_labels_at_nine_plus() {
-        assert_eq!(badge_label(1), "1");
-        assert_eq!(badge_label(9), "9");
-        assert_eq!(badge_label(10), "9+");
-    }
-
-    #[test]
-    fn draws_a_red_badge_with_white_text_inside_its_square() {
-        const WIDTH: u32 = 32;
-        let mut rgba = vec![0; (WIDTH * WIDTH * 4) as usize];
-        draw_badge(&mut rgba, WIDTH, 12, 0, 20, "8");
-        let pixel = |x: u32, y: u32| {
-            let i = ((y * WIDTH + x) * 4) as usize;
-            [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
-        };
-
-        assert_eq!(pixel(0, 0), [0; 4], "outside the badge square");
-        assert_eq!(pixel(12, 0)[3], 0, "outside the circle in its corner");
-        assert_eq!(pixel(22, 10), [255, 255, 255, 255], "centre stroke of 8");
-        assert_eq!(pixel(14, 10), [0xE5, 0x39, 0x35, 255], "badge fill");
-        assert_eq!(pixel(22, 25), [0; 4], "below the badge");
+    fn notification_click_script_uses_the_javascript_hook() {
+        assert_eq!(
+            notification_click_script(-7),
+            "window.__whatherustNotificationClick?.(-7)"
+        );
+        assert!(NOTIFICATION_CLICK_SCRIPT.contains("__whatherustNotificationClick"));
     }
 
     #[test]

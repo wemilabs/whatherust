@@ -14,26 +14,7 @@ use tauri_plugin_updater::UpdaterExt;
 mod settings;
 
 const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
-// The page only caches the Rust value; the hook re-reads it so page code can't override the setting.
-const NOTIFICATION_GATE: &str = r#"(() => {
-  const Polyfill = window.Notification;
-  if (typeof Polyfill !== "function") return;
-  let enabled = __NOTIFICATIONS_ENABLED__;
-  const sync = () =>
-    window.__TAURI_INTERNALS__
-      .invoke("notifications_enabled")
-      .then((value) => { enabled = value === true; })
-      .catch(() => {});
-  Object.defineProperty(window, "__whatherustSyncNotifications", { value: sync });
-  sync();
-  window.Notification = new Proxy(Polyfill, {
-    construct(target, args, newTarget) {
-      return enabled
-        ? Reflect.construct(target, args, newTarget)
-        : Object.create(target.prototype);
-    },
-  });
-})();"#;
+const NOTIFICATION_GATE: &str = include_str!("notification-gate.js");
 
 #[cfg(target_os = "linux")]
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
@@ -79,14 +60,6 @@ pub fn run() {
             ));
             let settings = app.state::<settings::SettingsStore>().get();
             let start_on_login = settings.start_on_login;
-            let notification_gate = NOTIFICATION_GATE.replace(
-                "__NOTIFICATIONS_ENABLED__",
-                if settings.notifications_enabled {
-                    "true"
-                } else {
-                    "false"
-                },
-            );
             if start_on_login {
                 // Re-register so a moved or updated app keeps starting at login.
                 if let Err(error) = settings::apply_autostart(app.handle(), true) {
@@ -115,7 +88,7 @@ pub fn run() {
             let builder = WebviewWindowBuilder::from_config(app.handle(), window_config)?
                 // macOS ignores this override; WKWebView persists by bundle identifier.
                 .data_directory(data_dir.join("webview"))
-                .initialization_script(&notification_gate)
+                .initialization_script(NOTIFICATION_GATE)
                 // WhatsApp Web rejects or degrades WebKit user agents.
                 .user_agent(USER_AGENT)
                 .on_navigation({

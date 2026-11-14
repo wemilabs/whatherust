@@ -1,8 +1,5 @@
 use std::path::Path;
-use std::sync::{
-    Mutex,
-    atomic::{AtomicBool, Ordering},
-};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use tauri::{
@@ -28,32 +25,82 @@ enum UpdateCheck {
 
 #[derive(Default)]
 struct UpdateState {
-    busy: AtomicBool,
-    manual_requested: AtomicBool,
+    activity: Mutex<UpdateActivity>,
     dismissed: Mutex<Option<String>>,
 }
 
+#[derive(Default)]
+enum UpdateActivity {
+    #[default]
+    Idle,
+    Checking(UpdateCheck),
+    Reporting(UpdateCheck),
+}
+
 impl UpdateState {
-    fn effective_kind(&self, kind: UpdateCheck) -> UpdateCheck {
-        if kind == UpdateCheck::Manual || self.manual_requested.load(Ordering::Acquire) {
-            UpdateCheck::Manual
-        } else {
-            UpdateCheck::Automatic
+    fn begin(&self, kind: UpdateCheck) -> Option<UpdateBusyGuard<'_>> {
+        let mut activity = self.activity.lock().unwrap();
+        match &mut *activity {
+            UpdateActivity::Idle => {
+                *activity = UpdateActivity::Checking(kind);
+                Some(UpdateBusyGuard {
+                    state: self,
+                    active: true,
+                })
+            }
+            UpdateActivity::Checking(current) => {
+                if kind == UpdateCheck::Manual {
+                    *current = UpdateCheck::Manual;
+                }
+                None
+            }
+            UpdateActivity::Reporting(_) => None,
         }
+    }
+
+    fn should_report(&self, show_automatically: bool) -> bool {
+        let mut activity = self.activity.lock().unwrap();
+        match *activity {
+            UpdateActivity::Checking(kind) | UpdateActivity::Reporting(kind)
+                if show_automatically || kind == UpdateCheck::Manual =>
+            {
+                *activity = UpdateActivity::Reporting(kind);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn should_prompt(&self, version: &str) -> bool {
+        let show_automatically = self.dismissed.lock().unwrap().as_deref() != Some(version);
+        self.should_report(show_automatically)
     }
 }
 
-struct UpdateBusyGuard<'a>(&'a UpdateState);
+struct UpdateBusyGuard<'a> {
+    state: &'a UpdateState,
+    active: bool,
+}
+
+impl UpdateBusyGuard<'_> {
+    fn retry_manual(&mut self) -> bool {
+        let mut activity = self.state.activity.lock().unwrap();
+        // A manual request may arrive after a silent result was decided.
+        if matches!(*activity, UpdateActivity::Checking(UpdateCheck::Manual)) {
+            return true;
+        }
+        *activity = UpdateActivity::Idle;
+        self.active = false;
+        false
+    }
+}
 
 impl Drop for UpdateBusyGuard<'_> {
     fn drop(&mut self) {
-        self.0.manual_requested.store(false, Ordering::Release);
-        self.0.busy.store(false, Ordering::Release);
+        if self.active {
+            *self.state.activity.lock().unwrap() = UpdateActivity::Idle;
+        }
     }
-}
-
-fn should_prompt(kind: UpdateCheck, version: &str, dismissed: Option<&str>) -> bool {
-    kind == UpdateCheck::Manual || dismissed != Some(version)
 }
 
 #[cfg(target_os = "linux")]
@@ -247,38 +294,27 @@ pub fn run() {
 
 async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
     let state = app.state::<UpdateState>();
-    if state.busy.swap(true, Ordering::AcqRel) {
-        if kind == UpdateCheck::Manual {
-            state.manual_requested.store(true, Ordering::Release);
-        }
+    let Some(mut busy) = state.begin(kind) else {
         return;
-    }
-    let _busy = UpdateBusyGuard(&state);
+    };
 
-    async fn check(
-        app: &AppHandle,
-        state: &UpdateState,
-        kind: UpdateCheck,
-    ) -> tauri_plugin_updater::Result<()> {
+    async fn check(app: &AppHandle, state: &UpdateState) -> tauri_plugin_updater::Result<()> {
         let Some(update) = app.updater()?.check().await? else {
-            if state.effective_kind(kind) == UpdateCheck::Manual {
-                app.dialog()
-                    .message(format!(
+            if state.should_report(false) {
+                show_update_message(
+                    app,
+                    format!(
                         "WhatheRust {} is the latest version.",
                         app.package_info().version
-                    ))
-                    .title("WhatheRust update")
-                    .kind(MessageDialogKind::Info)
-                    .show(|_| {});
+                    ),
+                    MessageDialogKind::Info,
+                )
+                .await;
             }
             return Ok(());
         };
         let version = update.version.clone();
-        if !should_prompt(
-            state.effective_kind(kind),
-            &version,
-            state.dismissed.lock().unwrap().as_deref(),
-        ) {
+        if !state.should_prompt(&version) {
             return Ok(());
         }
 
@@ -311,16 +347,33 @@ async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
         Ok(())
     }
 
-    match check(&app, &state, kind).await {
-        Err(error) if state.effective_kind(kind) == UpdateCheck::Manual => {
-            app.dialog()
-                .message(format!("Could not check for updates: {error}"))
-                .title("WhatheRust update")
-                .kind(MessageDialogKind::Error)
-                .show(|_| {});
+    loop {
+        if let Err(error) = check(&app, &state).await
+            && state.should_report(false)
+        {
+            show_update_message(
+                &app,
+                format!("Could not check for updates: {error}"),
+                MessageDialogKind::Error,
+            )
+            .await;
         }
-        _ => {}
+        if !busy.retry_manual() {
+            break;
+        }
     }
+}
+
+async fn show_update_message(app: &AppHandle, message: String, kind: MessageDialogKind) {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .message(message)
+        .title("WhatheRust update")
+        .kind(kind)
+        .show(move |_| {
+            let _ = sender.send(());
+        });
+    let _ = receiver.await;
 }
 
 /// Moves data left by builds made before the app identifier was renamed.
@@ -508,49 +561,118 @@ fn toggle_main_window(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::Ordering;
-
-    use super::{UpdateCheck, UpdateState, is_allowed_url, should_prompt};
+    use super::{UpdateCheck, UpdateState, is_allowed_url};
 
     #[test]
-    fn should_prompt_respects_dismissed_version_for_automatic_checks() {
-        assert!(!should_prompt(
-            UpdateCheck::Automatic,
-            "2.0.0",
-            Some("2.0.0")
-        ));
-        assert!(should_prompt(
-            UpdateCheck::Automatic,
-            "2.0.0",
-            Some("1.9.0")
-        ));
-        assert!(should_prompt(UpdateCheck::Automatic, "2.0.0", None));
-    }
-
-    #[test]
-    fn should_prompt_always_prompts_for_manual_checks() {
-        assert!(should_prompt(UpdateCheck::Manual, "2.0.0", Some("2.0.0")));
-    }
-
-    #[test]
-    fn effective_kind_respects_manual_requests() {
+    fn automatic_checks_respect_dismissed_versions() {
         let state = UpdateState::default();
+        *state.dismissed.lock().unwrap() = Some("2.0.0".into());
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
 
-        assert_eq!(
-            state.effective_kind(UpdateCheck::Automatic),
-            UpdateCheck::Automatic
-        );
+        assert!(!state.should_prompt("2.0.0"));
+        assert!(state.should_prompt("2.0.1"));
+        assert!(!busy.retry_manual());
+    }
 
-        state.manual_requested.store(true, Ordering::Release);
+    #[test]
+    fn manual_checks_can_prompt_for_dismissed_versions() {
+        let state = UpdateState::default();
+        *state.dismissed.lock().unwrap() = Some("2.0.0".into());
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
 
-        assert_eq!(
-            state.effective_kind(UpdateCheck::Automatic),
-            UpdateCheck::Manual
-        );
-        assert_eq!(
-            state.effective_kind(UpdateCheck::Manual),
-            UpdateCheck::Manual
-        );
+        assert!(!state.should_prompt("2.0.0"));
+        assert!(state.begin(UpdateCheck::Manual).is_none());
+        assert!(state.should_prompt("2.0.0"));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn automatic_checks_can_finish_silently() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(!state.should_report(false));
+        assert!(!busy.retry_manual());
+        assert!(state.begin(UpdateCheck::Manual).is_some());
+    }
+
+    #[test]
+    fn manual_checks_always_report_results() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Manual).unwrap();
+
+        assert!(state.should_report(false));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn manual_requests_upgrade_an_automatic_check() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(state.begin(UpdateCheck::Manual).is_none());
+        assert!(state.begin(UpdateCheck::Automatic).is_none());
+        assert!(state.should_report(false));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn manual_requests_after_a_silent_result_are_retried() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(!state.should_report(false));
+        assert!(state.begin(UpdateCheck::Manual).is_none());
+        assert!(busy.retry_manual());
+        assert!(state.should_report(false));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn requests_during_a_dialog_do_not_start_another_check() {
+        for kind in [UpdateCheck::Automatic, UpdateCheck::Manual] {
+            let state = UpdateState::default();
+            let mut busy = state.begin(kind).unwrap();
+
+            assert!(state.should_report(true));
+            assert!(state.begin(UpdateCheck::Manual).is_none());
+            assert!(state.begin(UpdateCheck::Automatic).is_none());
+            assert!(!busy.retry_manual());
+        }
+    }
+
+    #[test]
+    fn manual_feedback_is_preserved_if_installation_fails() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(state.begin(UpdateCheck::Manual).is_none());
+        assert!(state.should_report(true));
+        assert!(state.should_report(false));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn dropping_a_finished_guard_does_not_clear_a_new_check() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+        assert!(!busy.retry_manual());
+
+        let next = state.begin(UpdateCheck::Manual).unwrap();
+        drop(busy);
+        assert!(state.begin(UpdateCheck::Automatic).is_none());
+        drop(next);
+        assert!(state.begin(UpdateCheck::Automatic).is_some());
+    }
+
+    #[test]
+    fn dropping_an_active_guard_allows_another_check() {
+        let state = UpdateState::default();
+        let busy = state.begin(UpdateCheck::Automatic).unwrap();
+        assert!(state.begin(UpdateCheck::Automatic).is_none());
+
+        drop(busy);
+        assert!(state.begin(UpdateCheck::Manual).is_some());
     }
 
     #[test]

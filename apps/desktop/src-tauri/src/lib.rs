@@ -365,14 +365,19 @@ async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
 }
 
 async fn show_update_message(app: &AppHandle, message: String, kind: MessageDialogKind) {
+    show_main_window(app);
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    app.dialog()
+    let mut dialog = app
+        .dialog()
         .message(message)
         .title("WhatheRust update")
-        .kind(kind)
-        .show(move |_| {
-            let _ = sender.send(());
-        });
+        .kind(kind);
+    if let Some(window) = app.get_webview_window("main") {
+        dialog = dialog.parent(&window);
+    }
+    dialog.show(move |_| {
+        let _ = sender.send(());
+    });
     let _ = receiver.await;
 }
 

@@ -3,7 +3,7 @@ fn main() {
         tauri_build::AppManifest::new().commands(&[
             "get_settings",
             "set_settings",
-            "notifications_enabled",
+            "show_notification",
         ]),
     ))
     .expect("failed to build Tauri application");

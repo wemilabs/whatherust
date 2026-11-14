@@ -6,7 +6,6 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::NewWindowResponse,
 };
-use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
@@ -59,22 +58,9 @@ pub fn run() {
                 data_dir.join("settings.json"),
             ));
             let settings = app.state::<settings::SettingsStore>().get();
-            let start_on_login = settings.start_on_login;
-            if start_on_login {
-                // Re-register so a moved or updated app keeps starting at login.
-                if let Err(error) = settings::apply_autostart(app.handle(), true) {
-                    eprintln!("failed to reconcile autostart setting: {error}");
-                }
-            } else {
-                match app.autolaunch().is_enabled() {
-                    Ok(true) => {
-                        if let Err(error) = settings::apply_autostart(app.handle(), false) {
-                            eprintln!("failed to reconcile autostart setting: {error}");
-                        }
-                    }
-                    Ok(false) => {}
-                    Err(error) => eprintln!("failed to read autostart state: {error}"),
-                }
+            // Re-register moved apps and remove stale entries when disabled.
+            if let Err(error) = settings::apply_autostart(app.handle(), settings.start_on_login) {
+                eprintln!("failed to reconcile autostart setting: {error}");
             }
 
             #[cfg(target_os = "macos")]
@@ -207,7 +193,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             settings::get_settings,
             settings::set_settings,
-            settings::notifications_enabled
+            settings::show_notification
         ])
         .build(tauri::generate_context!())
         .expect("error while building WhatheRust")

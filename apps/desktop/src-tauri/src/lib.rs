@@ -364,6 +364,7 @@ async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
     }
 }
 
+#[cfg(not(target_os = "linux"))]
 async fn show_update_message(app: &AppHandle, message: String, kind: MessageDialogKind) {
     show_main_window(app);
     let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -377,6 +378,47 @@ async fn show_update_message(app: &AppHandle, message: String, kind: MessageDial
     }
     dialog.show(move |_| {
         let _ = sender.send(());
+    });
+    let _ = receiver.await;
+}
+
+#[cfg(target_os = "linux")]
+async fn show_update_message(app: &AppHandle, message: String, kind: MessageDialogKind) {
+    use gtk::prelude::*;
+    use std::cell::RefCell;
+
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window("main") else {
+            return;
+        };
+        let Ok(parent) = window.gtk_window() else {
+            return;
+        };
+        show_main_window(&handle);
+        // rfd's GTK message backend ignores the plugin's parent window.
+        let dialog = gtk::MessageDialog::builder()
+            .transient_for(&parent)
+            .modal(true)
+            .destroy_with_parent(true)
+            .title("WhatheRust update")
+            .text(message)
+            .message_type(match kind {
+                MessageDialogKind::Error => gtk::MessageType::Error,
+                MessageDialogKind::Warning => gtk::MessageType::Warning,
+                _ => gtk::MessageType::Info,
+            })
+            .buttons(gtk::ButtonsType::Ok)
+            .build();
+        let sender = RefCell::new(Some(sender));
+        dialog.connect_response(move |dialog, _| {
+            dialog.close();
+            if let Some(sender) = sender.borrow_mut().take() {
+                let _ = sender.send(());
+            }
+        });
+        dialog.present();
     });
     let _ = receiver.await;
 }

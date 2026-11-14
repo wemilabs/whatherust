@@ -89,7 +89,6 @@ deployed on Vercel.
 
 - Clicking a native notification does not focus the corresponding chat.
 - Calls and voice features may not work in WebKitGTK.
-- On KDE/X11, update dialogs may open behind another active app. Switch to WhatheRust when it requests attention.
 - This is an experimental wrapper scaffold; it is not an independent WhatsApp client.
 
 ## Icons

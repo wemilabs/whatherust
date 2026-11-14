@@ -443,7 +443,9 @@ async fn show_update_dialog(app: &AppHandle, message: String, kind: UpdateDialog
             .window()
             .and_then(|window| window.downcast::<gdkx11::X11Window>().ok())
         {
-            dialog.present_with_time(gdkx11::functions::x11_get_server_time(&window));
+            let timestamp = gdkx11::functions::x11_get_server_time(&window);
+            window.set_user_time(timestamp);
+            dialog.present_with_time(timestamp);
         } else {
             dialog.present();
         }
@@ -632,8 +634,9 @@ fn show_main_window(app: &AppHandle) {
                     .and_then(|window| window.downcast::<gdkx11::X11Window>().ok())
                 {
                     // D-Bus activation has no fresh GDK event timestamp.
-                    gtk_window
-                        .present_with_time(gdkx11::functions::x11_get_server_time(&x11_window));
+                    let timestamp = gdkx11::functions::x11_get_server_time(&x11_window);
+                    x11_window.set_user_time(timestamp);
+                    gtk_window.present_with_time(timestamp);
                     return;
                 }
             }

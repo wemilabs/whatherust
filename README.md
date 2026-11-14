@@ -94,14 +94,28 @@ deployed on Vercel.
 
 ## Icons
 
-The icons are generated from the SVG sources in `apps/desktop/src-tauri/icons/`:
+The SVG sources live in `apps/desktop/src-tauri/icons/`. `icon.svg` is the shared
+artwork; `icon-compact.svg` frames it for Windows/Linux, while `icon-macos.svg`
+leaves a little more breathing room for the Dock. Both crops center the artwork.
+The macOS menu-bar template stays monochrome and is sized separately.
 
 ```sh
 cd apps/desktop/src-tauri
-rsvg-convert -w 1024 -h 1024 icons/icon.svg -o /tmp/icon.png
+rsvg-convert -w 1024 -h 1024 icons/icon-compact.svg -o /tmp/icon.png
 cargo tauri icon /tmp/icon.png -o icons
+
+# Only replace the ICNS with the macOS-specific framing.
+rsvg-convert -w 1024 -h 1024 icons/icon-macos.svg -o /tmp/icon-macos.png
+cargo tauri icon /tmp/icon-macos.png -o /tmp/whatherust-macos-icons
+cp /tmp/whatherust-macos-icons/icon.icns icons/icon.icns
+
 rsvg-convert -w 44 -h 44 icons/tray-template.svg -o icons/tray-template.png
 ```
+
+The desktop `check` script verifies visible bounds, centering, and unclipped edges
+for the Linux PNGs, Windows ICO frames, macOS ICNS representations, and menu-bar
+template. The Tauri CLI installed by pnpm also works: replace `cargo tauri` with
+`pnpm exec tauri` when running these commands from `apps/desktop/src-tauri`.
 
 ## License
 

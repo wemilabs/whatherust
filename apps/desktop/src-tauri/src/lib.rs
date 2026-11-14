@@ -1,10 +1,12 @@
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use tauri::{
-    AppHandle, Manager, WebviewWindowBuilder,
-    menu::{Menu, MenuItem},
+    AppHandle, Manager, WebviewWindow, WebviewWindowBuilder,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::NewWindowResponse,
 };
@@ -13,6 +15,8 @@ use tauri_plugin_dialog::MessageDialogKind;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
+
+mod settings;
 
 const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
 const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
@@ -107,6 +111,7 @@ impl Drop for UpdateBusyGuard<'_> {
         }
     }
 }
+const NOTIFICATION_GATE: &str = include_str!("notification-gate.js");
 
 #[cfg(target_os = "linux")]
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
@@ -120,6 +125,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
+        .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -140,6 +146,7 @@ pub fn run() {
                 .find(|config| config.label == "main")
                 .ok_or("missing main window configuration")?;
             let app_handle = app.handle().clone();
+            let shown_count = Arc::new(AtomicU32::new(0));
 
             if !cfg!(debug_assertions) {
                 let update_handle = app_handle.clone();
@@ -153,6 +160,14 @@ pub fn run() {
 
             let data_dir = app.path().app_local_data_dir()?;
             move_legacy(&data_dir.with_file_name(LEGACY_IDENTIFIER), &data_dir);
+            app.manage(settings::SettingsStore::load(
+                data_dir.join("settings.json"),
+            ));
+            let settings = app.state::<settings::SettingsStore>().get();
+            // Re-register moved apps and remove stale entries when disabled.
+            if let Err(error) = settings::apply_autostart(app.handle(), settings.start_on_login) {
+                eprintln!("failed to reconcile autostart setting: {error}");
+            }
 
             #[cfg(target_os = "macos")]
             let migration_pending = !migrate_legacy_webkit_data(
@@ -165,6 +180,7 @@ pub fn run() {
             let builder = WebviewWindowBuilder::from_config(app.handle(), window_config)?
                 // macOS ignores this override; WKWebView persists by bundle identifier.
                 .data_directory(data_dir.join("webview"))
+                .initialization_script(NOTIFICATION_GATE)
                 // WhatsApp Web rejects or degrades WebKit user agents.
                 .user_agent(USER_AGENT)
                 .on_navigation({
@@ -185,9 +201,16 @@ pub fn run() {
                         NewWindowResponse::Deny
                     }
                 })
-                .on_document_title_changed(|webview, title| {
-                    if let Some(tray) = webview.app_handle().tray_by_id("main") {
-                        let _ = tray.set_tooltip(Some(title.replace("WhatsApp", "WhatheRust")));
+                .on_document_title_changed({
+                    let shown_count = shown_count.clone();
+                    move |window, title| {
+                        if let Some(tray) = window.app_handle().tray_by_id("main") {
+                            let _ = tray.set_tooltip(Some(title.replace("WhatsApp", "WhatheRust")));
+                        }
+                        let count = unread_count(&title);
+                        if shown_count.swap(count, Ordering::Relaxed) != count {
+                            show_unread_badge(&window, count);
+                        }
                     }
                 });
             // Invariant: any launch without the migration marker is incognito, so wiping the leftover new store never destroys a real session.
@@ -216,8 +239,22 @@ pub fn run() {
             let close_window = window.clone();
             window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = close_window.hide();
+                    if close_window
+                        .state::<settings::SettingsStore>()
+                        .get()
+                        .close_to_tray
+                    {
+                        api.prevent_close();
+                        let _ = close_window.hide();
+                    } else {
+                        close_window.app_handle().exit(0);
+                    }
+                }
+                // Windows discards the taskbar overlay when its button disappears on hide.
+                // Reapply on focus so restoring also refreshes an unchanged count.
+                #[cfg(target_os = "windows")]
+                if let tauri::WindowEvent::Focused(true) = event {
+                    show_unread_badge(&close_window, shown_count.load(Ordering::Relaxed));
                 }
                 #[cfg(target_os = "macos")]
                 if let tauri::WindowEvent::ThemeChanged(theme) = event {
@@ -233,8 +270,20 @@ pub fn run() {
                 true,
                 None::<&str>,
             )?;
+            let settings_item =
+                MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+            let separator = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &check_updates_item, &quit_item])?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &show_item,
+                    &settings_item,
+                    &check_updates_item,
+                    &separator,
+                    &quit_item,
+                ],
+            )?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main")
                 .tooltip("WhatheRust")
@@ -263,6 +312,7 @@ pub fn run() {
                             UpdateCheck::Manual,
                         ));
                     }
+                    "settings" => open_settings_window(app),
                     "quit" => app.exit(0),
                     _ => {}
                 });
@@ -280,6 +330,11 @@ pub fn run() {
 
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            settings::get_settings,
+            settings::set_settings,
+            settings::show_notification
+        ])
         .build(tauri::generate_context!())
         .expect("error while building WhatheRust")
         .run(|app, event| {
@@ -595,6 +650,137 @@ fn titlebar_color(theme: tauri::Theme) -> tauri::window::Color {
     }
 }
 
+/// WhatsApp Web prefixes its title with the unread chat count, e.g. `(3) WhatsApp`.
+fn unread_count(title: &str) -> u32 {
+    title
+        .trim_start()
+        .strip_prefix('(')
+        .and_then(|rest| rest.split_once(')'))
+        .and_then(|(count, _)| count.trim().trim_end_matches('+').parse().ok())
+        .unwrap_or(0)
+}
+
+/// Shows `count` on the dock (macOS), launcher (Linux), taskbar overlay (Windows) and tray icon; 0 clears it.
+fn show_unread_badge(window: &WebviewWindow, count: u32) {
+    #[cfg(not(target_os = "windows"))]
+    let _ = window.set_badge_count((count > 0).then_some(i64::from(count)));
+
+    #[cfg(target_os = "windows")]
+    {
+        let icon = (count > 0).then(|| {
+            // Render on the native 16px grid so downsampling cannot merge the glyph strokes.
+            const SIZE: u32 = 16;
+            let mut rgba = vec![0; (SIZE * SIZE * 4) as usize];
+            draw_badge(&mut rgba, SIZE, 0, 0, SIZE, &badge_label(count));
+            tauri::image::Image::new_owned(rgba, SIZE, SIZE)
+        });
+        let _ = window.set_overlay_icon(icon.clone());
+        if let Some(tray) = window.app_handle().tray_by_id("main") {
+            // The Windows tray is only 16px: use the whole icon for a readable count.
+            let icon = icon.or_else(|| window.app_handle().default_window_icon().cloned());
+            let _ = tray.set_icon(icon);
+        }
+    }
+
+    // The macOS menu bar icon is a monochrome template, so the Dock badge carries the count there.
+    #[cfg(target_os = "linux")]
+    if let (Some(tray), Some(icon)) = (
+        window.app_handle().tray_by_id("main"),
+        window.app_handle().default_window_icon(),
+    ) {
+        let icon = if count == 0 {
+            icon.clone()
+        } else {
+            let (width, height) = (icon.width(), icon.height());
+            let size = width.min(height) * 5 / 8;
+            let mut rgba = icon.rgba().to_vec();
+            draw_badge(&mut rgba, width, width - size, 0, size, &badge_label(count));
+            tauri::image::Image::new_owned(rgba, width, height)
+        };
+        let _ = tray.set_icon(Some(icon));
+    }
+}
+
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn badge_label(count: u32) -> String {
+    if count > 9 {
+        "9+".into()
+    } else {
+        count.to_string()
+    }
+}
+
+/// Paints a red badge with white `label` text into the `size` px square at `left`, `top` of a straight-alpha RGBA buffer.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn draw_badge(rgba: &mut [u8], width: u32, left: u32, top: u32, size: u32, label: &str) {
+    const RED: [u8; 3] = [0xE5, 0x39, 0x35];
+    // 3x5 pixel glyphs, one row per byte, most significant of the 3 bits on the left.
+    const fn glyph(c: char) -> [u8; 5] {
+        match c {
+            '0' => [7, 5, 5, 5, 7],
+            '1' => [2, 6, 2, 2, 7],
+            '2' => [7, 1, 7, 4, 7],
+            '3' => [7, 1, 7, 1, 7],
+            '4' => [5, 5, 7, 1, 1],
+            '5' => [7, 4, 7, 1, 7],
+            '6' => [7, 4, 7, 5, 7],
+            '7' => [7, 1, 1, 1, 1],
+            '8' => [7, 5, 7, 5, 7],
+            '9' => [7, 5, 7, 1, 7],
+            '+' => [0, 2, 7, 2, 0],
+            _ => [0; 5],
+        }
+    }
+
+    let mut blend = |x: u32, y: u32, color: [u8; 3], alpha: f32| {
+        let i = ((y * width + x) * 4) as usize;
+        let Some(pixel) = rgba.get_mut(i..i + 4) else {
+            return;
+        };
+        let below = f32::from(pixel[3]) / 255.0 * (1.0 - alpha);
+        let out = alpha + below;
+        if out > 0.0 {
+            for (channel, &top) in pixel.iter_mut().zip(&color) {
+                *channel =
+                    ((f32::from(top) * alpha + f32::from(*channel) * below) / out).round() as u8;
+            }
+        }
+        pixel[3] = (out * 255.0).round() as u8;
+    };
+
+    let radius = size as f32 / 2.0;
+    for y in 0..size {
+        for x in 0..size {
+            let distance = (x as f32 + 0.5 - radius).hypot(y as f32 + 0.5 - radius);
+            let coverage = (radius - distance + 0.5).clamp(0.0, 1.0);
+            if coverage > 0.0 {
+                blend(left + x, top + y, RED, coverage);
+            }
+        }
+    }
+
+    let columns = (label.chars().count() * 4).saturating_sub(1).max(1) as u32;
+    let scale = (size * 13 / 20 / columns).min(size * 11 / 20 / 5).max(1);
+    let text_left = left + size.saturating_sub(columns * scale) / 2;
+    let text_top = top + size.saturating_sub(5 * scale) / 2;
+    for (index, c) in label.chars().enumerate() {
+        for (row, bits) in glyph(c).into_iter().enumerate() {
+            for column in 0..3 {
+                if bits & (4 >> column) == 0 {
+                    continue;
+                }
+                let x = text_left + (index as u32 * 4 + column) * scale;
+                let y = text_top + row as u32 * scale;
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        blend(x + dx, y + dy, [255; 3], 1.0);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn is_allowed_url(url: &tauri::Url) -> bool {
     if matches!(url.scheme(), "blob" | "data" | "about") {
         return true;
@@ -647,6 +833,42 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
+fn open_settings_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("settings") {
+        if let Err(error) = window.show() {
+            eprintln!("failed to show settings window: {error}");
+        }
+        if let Err(error) = window.unminimize() {
+            eprintln!("failed to unminimize settings window: {error}");
+        }
+        if let Err(error) = window.set_focus() {
+            eprintln!("failed to focus settings window: {error}");
+        }
+        return;
+    }
+
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == "settings")
+    else {
+        eprintln!("missing settings window configuration");
+        return;
+    };
+
+    match WebviewWindowBuilder::from_config(app, config).and_then(|builder| builder.build()) {
+        Ok(window) => {
+            #[cfg(target_os = "windows")]
+            round_corners(&window);
+            #[cfg(not(target_os = "windows"))]
+            let _ = window;
+        }
+        Err(error) => eprintln!("failed to create settings window: {error}"),
+    }
+}
+
 fn toggle_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false) {
@@ -659,7 +881,7 @@ fn toggle_main_window(app: &AppHandle) {
 
 #[cfg(test)]
 mod tests {
-    use super::{UpdateCheck, UpdateState, is_allowed_url};
+    use super::{UpdateCheck, UpdateState, badge_label, draw_badge, is_allowed_url, unread_count};
 
     #[test]
     fn automatic_checks_respect_dismissed_versions() {
@@ -771,6 +993,50 @@ mod tests {
 
         drop(busy);
         assert!(state.begin(UpdateCheck::Manual).is_some());
+    }
+
+    #[test]
+    fn parses_the_unread_count_prefix() {
+        let cases = [
+            ("(3) WhatsApp", 3),
+            ("(128) WhatsApp", 128),
+            (" (1) WhatsApp", 1),
+            ("(99+) WhatsApp", 99),
+            ("WhatsApp", 0),
+            ("(0) WhatsApp", 0),
+            ("WhatsApp (3)", 0),
+            ("(abc) WhatsApp", 0),
+            ("(3 WhatsApp", 0),
+            ("", 0),
+        ];
+
+        for (title, expected) in cases {
+            assert_eq!(unread_count(title), expected, "{title}");
+        }
+    }
+
+    #[test]
+    fn caps_badge_labels_at_nine_plus() {
+        assert_eq!(badge_label(1), "1");
+        assert_eq!(badge_label(9), "9");
+        assert_eq!(badge_label(10), "9+");
+    }
+
+    #[test]
+    fn draws_a_red_badge_with_white_text_inside_its_square() {
+        const WIDTH: u32 = 32;
+        let mut rgba = vec![0; (WIDTH * WIDTH * 4) as usize];
+        draw_badge(&mut rgba, WIDTH, 12, 0, 20, "8");
+        let pixel = |x: u32, y: u32| {
+            let i = ((y * WIDTH + x) * 4) as usize;
+            [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+        };
+
+        assert_eq!(pixel(0, 0), [0; 4], "outside the badge square");
+        assert_eq!(pixel(12, 0)[3], 0, "outside the circle in its corner");
+        assert_eq!(pixel(22, 10), [255, 255, 255, 255], "centre stroke of 8");
+        assert_eq!(pixel(14, 10), [0xE5, 0x39, 0x35, 255], "badge fill");
+        assert_eq!(pixel(22, 25), [0; 4], "below the badge");
     }
 
     #[test]

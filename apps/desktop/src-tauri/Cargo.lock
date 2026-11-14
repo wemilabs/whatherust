@@ -4817,6 +4817,7 @@ name = "whatherust"
 version = "0.1.0"
 dependencies = [
  "core-foundation 0.10.1",
+ "gdkx11",
  "gtk",
  "objc2-web-kit",
  "security-framework",

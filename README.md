@@ -15,6 +15,7 @@ Tauri uses WebView2, WKWebView, or WebKitGTK provided by the operating system ra
 - Persistent session data at `<app local data dir>/webview` (for example, `~/.local/share/com.wemilabs.whatherust/webview` on Linux).
 - Desktop Chrome user agent for compatibility with WhatsApp Web.
 - System tray with show/quit actions, close-to-tray behavior, and the unread count in the tray tooltip.
+- A tray Settings window for startup, close behavior, and notification preferences.
 - Native notifications through Tauri's notification plugin.
 - External links open in the system browser.
 - Single-instance behavior.
@@ -73,8 +74,9 @@ Alternatively, run `cargo tauri dev` from `apps/desktop/src-tauri`. Bundles are 
 
 ## Auto-update
 
-Release builds check GitHub Releases for updates on launch. Updates are signed with the updater
-key; configure the `TAURI_SIGNING_PRIVATE_KEY` repository secret for release builds. Push a `vX.Y.Z`
+Release builds check GitHub Releases on launch, every six hours, and on demand from the tray's
+“Check for updates…” item. Updates are signed with the updater key; configure the
+`TAURI_SIGNING_PRIVATE_KEY` repository secret for release builds. Push a `vX.Y.Z`
 tag to create a draft release, which is published after all platform builds succeed.
 The app version is taken from the tag, so use `vX.Y.Z` with valid SemVer.
 

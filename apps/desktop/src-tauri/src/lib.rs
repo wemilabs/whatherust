@@ -1,18 +1,118 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tauri::{
-    AppHandle, Manager, WebviewWindowBuilder,
-    menu::{Menu, MenuItem},
+    AppHandle, Manager, WebviewWindow, WebviewWindowBuilder,
+    menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     webview::NewWindowResponse,
 };
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogResult};
+use tauri_plugin_dialog::MessageDialogKind;
+#[cfg(not(target_os = "linux"))]
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_opener::OpenerExt;
 use tauri_plugin_updater::UpdaterExt;
 
+mod settings;
+
 const LEGACY_IDENTIFIER: &str = "com.wemilabs.whatsapp-desktop-rs";
+const NOTIFICATION_GATE: &str = include_str!("notification-gate.js");
 const NOTIFICATION_CLICK_SCRIPT: &str = include_str!("notification-click.js");
+const UPDATE_CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum UpdateCheck {
+    Automatic,
+    Manual,
+}
+
+enum UpdateDialog {
+    Message(MessageDialogKind),
+    Install,
+}
+
+#[derive(Default)]
+struct UpdateState {
+    activity: Mutex<UpdateActivity>,
+    dismissed: Mutex<Option<String>>,
+}
+
+#[derive(Default)]
+enum UpdateActivity {
+    #[default]
+    Idle,
+    Checking(UpdateCheck),
+    Reporting(UpdateCheck),
+}
+
+impl UpdateState {
+    fn begin(&self, kind: UpdateCheck) -> Option<UpdateBusyGuard<'_>> {
+        let mut activity = self.activity.lock().unwrap();
+        match &mut *activity {
+            UpdateActivity::Idle => {
+                *activity = UpdateActivity::Checking(kind);
+                Some(UpdateBusyGuard {
+                    state: self,
+                    active: true,
+                })
+            }
+            UpdateActivity::Checking(current) => {
+                if kind == UpdateCheck::Manual {
+                    *current = UpdateCheck::Manual;
+                }
+                None
+            }
+            UpdateActivity::Reporting(_) => None,
+        }
+    }
+
+    fn should_report(&self, show_automatically: bool) -> bool {
+        let mut activity = self.activity.lock().unwrap();
+        match *activity {
+            UpdateActivity::Checking(kind) | UpdateActivity::Reporting(kind)
+                if show_automatically || kind == UpdateCheck::Manual =>
+            {
+                *activity = UpdateActivity::Reporting(kind);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn should_prompt(&self, version: &str) -> bool {
+        let show_automatically = self.dismissed.lock().unwrap().as_deref() != Some(version);
+        self.should_report(show_automatically)
+    }
+}
+
+struct UpdateBusyGuard<'a> {
+    state: &'a UpdateState,
+    active: bool,
+}
+
+impl UpdateBusyGuard<'_> {
+    fn retry_manual(&mut self) -> bool {
+        let mut activity = self.state.activity.lock().unwrap();
+        // A manual request may arrive after a silent result was decided.
+        if matches!(*activity, UpdateActivity::Checking(UpdateCheck::Manual)) {
+            return true;
+        }
+        *activity = UpdateActivity::Idle;
+        self.active = false;
+        false
+    }
+}
+
+impl Drop for UpdateBusyGuard<'_> {
+    fn drop(&mut self) {
+        if self.active {
+            *self.state.activity.lock().unwrap() = UpdateActivity::Idle;
+        }
+    }
+}
 
 #[cfg(target_os = "linux")]
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
@@ -26,6 +126,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
+        .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -37,6 +138,7 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            app.manage(UpdateState::default());
             let window_config = app
                 .config()
                 .app
@@ -45,6 +147,7 @@ pub fn run() {
                 .find(|config| config.label == "main")
                 .ok_or("missing main window configuration")?;
             let app_handle = app.handle().clone();
+            let shown_count = Arc::new(AtomicU32::new(0));
 
             app.notification().on_action({
                 let app_handle = app_handle.clone();
@@ -63,11 +166,25 @@ pub fn run() {
             })?;
 
             if !cfg!(debug_assertions) {
-                tauri::async_runtime::spawn(check_for_update(app.handle().clone()));
+                let update_handle = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        check_for_update(update_handle.clone(), UpdateCheck::Automatic).await;
+                        tokio::time::sleep(UPDATE_CHECK_INTERVAL).await;
+                    }
+                });
             }
 
             let data_dir = app.path().app_local_data_dir()?;
             move_legacy(&data_dir.with_file_name(LEGACY_IDENTIFIER), &data_dir);
+            app.manage(settings::SettingsStore::load(
+                data_dir.join("settings.json"),
+            ));
+            let settings = app.state::<settings::SettingsStore>().get();
+            // Re-register moved apps and remove stale entries when disabled.
+            if let Err(error) = settings::apply_autostart(app.handle(), settings.start_on_login) {
+                eprintln!("failed to reconcile autostart setting: {error}");
+            }
 
             #[cfg(target_os = "macos")]
             let migration_pending = !migrate_legacy_webkit_data(
@@ -80,6 +197,7 @@ pub fn run() {
             let builder = WebviewWindowBuilder::from_config(app.handle(), window_config)?
                 // macOS ignores this override; WKWebView persists by bundle identifier.
                 .data_directory(data_dir.join("webview"))
+                .initialization_script(NOTIFICATION_GATE)
                 // Replays native notification clicks into WhatsApp's own Notification handlers.
                 .initialization_script(NOTIFICATION_CLICK_SCRIPT)
                 // WhatsApp Web rejects or degrades WebKit user agents.
@@ -102,9 +220,16 @@ pub fn run() {
                         NewWindowResponse::Deny
                     }
                 })
-                .on_document_title_changed(|webview, title| {
-                    if let Some(tray) = webview.app_handle().tray_by_id("main") {
-                        let _ = tray.set_tooltip(Some(title.replace("WhatsApp", "WhatheRust")));
+                .on_document_title_changed({
+                    let shown_count = shown_count.clone();
+                    move |window, title| {
+                        if let Some(tray) = window.app_handle().tray_by_id("main") {
+                            let _ = tray.set_tooltip(Some(title.replace("WhatsApp", "WhatheRust")));
+                        }
+                        let count = unread_count(&title);
+                        if shown_count.swap(count, Ordering::Relaxed) != count {
+                            show_unread_badge(&window, count);
+                        }
                     }
                 });
             // Invariant: any launch without the migration marker is incognito, so wiping the leftover new store never destroys a real session.
@@ -133,8 +258,22 @@ pub fn run() {
             let close_window = window.clone();
             window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = close_window.hide();
+                    if close_window
+                        .state::<settings::SettingsStore>()
+                        .get()
+                        .close_to_tray
+                    {
+                        api.prevent_close();
+                        let _ = close_window.hide();
+                    } else {
+                        close_window.app_handle().exit(0);
+                    }
+                }
+                // Windows discards the taskbar overlay when its button disappears on hide.
+                // Reapply on focus so restoring also refreshes an unchanged count.
+                #[cfg(target_os = "windows")]
+                if let tauri::WindowEvent::Focused(true) = event {
+                    show_unread_badge(&close_window, shown_count.load(Ordering::Relaxed));
                 }
                 #[cfg(target_os = "macos")]
                 if let tauri::WindowEvent::ThemeChanged(theme) = event {
@@ -143,8 +282,27 @@ pub fn run() {
             });
 
             let show_item = MenuItem::with_id(app, "show", "Show WhatheRust", true, None::<&str>)?;
+            let settings_item =
+                MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
+            let separator = PredefinedMenuItem::separator(app)?;
+            let check_updates_item = MenuItem::with_id(
+                app,
+                "check_updates",
+                "Check for updates…",
+                true,
+                None::<&str>,
+            )?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            let menu = Menu::with_items(
+                app,
+                &[
+                    &show_item,
+                    &settings_item,
+                    &check_updates_item,
+                    &separator,
+                    &quit_item,
+                ],
+            )?;
 
             let mut tray_builder = TrayIconBuilder::with_id("main")
                 .tooltip("WhatheRust")
@@ -167,6 +325,13 @@ pub fn run() {
                 })
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => show_main_window(app),
+                    "settings" => open_settings_window(app),
+                    "check_updates" => {
+                        tauri::async_runtime::spawn(check_for_update(
+                            app.clone(),
+                            UpdateCheck::Manual,
+                        ));
+                    }
                     "quit" => app.exit(0),
                     _ => {}
                 });
@@ -184,6 +349,11 @@ pub fn run() {
 
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            settings::get_settings,
+            settings::set_settings,
+            settings::show_notification
+        ])
         .build(tauri::generate_context!())
         .expect("error while building WhatheRust")
         .run(|app, event| {
@@ -201,39 +371,160 @@ pub fn run() {
         });
 }
 
-async fn check_for_update(app: AppHandle) {
-    async fn check(app: &AppHandle) -> tauri_plugin_updater::Result<()> {
+async fn check_for_update(app: AppHandle, kind: UpdateCheck) {
+    let state = app.state::<UpdateState>();
+    let Some(mut busy) = state.begin(kind) else {
+        return;
+    };
+
+    async fn check(app: &AppHandle, state: &UpdateState) -> tauri_plugin_updater::Result<()> {
         let Some(update) = app.updater()?.check().await? else {
+            if state.should_report(false) {
+                show_update_message(
+                    app,
+                    format!(
+                        "WhatheRust {} is the latest version.",
+                        app.package_info().version
+                    ),
+                    MessageDialogKind::Info,
+                )
+                .await;
+            }
             return Ok(());
         };
-        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let version = update.version.clone();
+        if !state.should_prompt(&version) {
+            return Ok(());
+        }
 
-        app.dialog()
-            .message(format!(
+        if show_update_dialog(
+            app,
+            format!(
                 "WhatheRust {} is available. Install it now? The app will restart.",
                 update.version
-            ))
-            .title("WhatheRust update")
-            .buttons(MessageDialogButtons::OkCancelCustom(
-                "Install".into(),
-                "Later".into(),
-            ))
-            .show_with_result(move |result| {
-                let _ = sender.send(result);
-            });
-
-        if matches!(
-            receiver.await,
-            Ok(MessageDialogResult::Custom(button)) if button == "Install"
-        ) {
+            ),
+            UpdateDialog::Install,
+        )
+        .await
+        {
             update.download_and_install(|_, _| {}, || {}).await?;
             app.restart();
+        } else {
+            *state.dismissed.lock().unwrap() = Some(version);
         }
 
         Ok(())
     }
 
-    let _ = check(&app).await;
+    loop {
+        if let Err(error) = check(&app, &state).await
+            && state.should_report(false)
+        {
+            show_update_message(
+                &app,
+                format!("Could not check for updates: {error}"),
+                MessageDialogKind::Error,
+            )
+            .await;
+        }
+        if !busy.retry_manual() {
+            break;
+        }
+    }
+}
+
+async fn show_update_message(app: &AppHandle, message: String, kind: MessageDialogKind) {
+    show_update_dialog(app, message, UpdateDialog::Message(kind)).await;
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn show_update_dialog(app: &AppHandle, message: String, kind: UpdateDialog) -> bool {
+    show_main_window(app);
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let mut dialog = app.dialog().message(message).title("WhatheRust update");
+    dialog = match kind {
+        UpdateDialog::Message(kind) => dialog.kind(kind),
+        UpdateDialog::Install => dialog.buttons(MessageDialogButtons::OkCancelCustom(
+            "Install".into(),
+            "Later".into(),
+        )),
+    };
+    if let Some(window) = app.get_webview_window("main") {
+        dialog = dialog.parent(&window);
+    }
+    dialog.show(move |confirmed| {
+        let _ = sender.send(confirmed);
+    });
+    receiver.await.unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+async fn show_update_dialog(app: &AppHandle, message: String, kind: UpdateDialog) -> bool {
+    use gtk::prelude::*;
+    use std::{cell::Cell, rc::Rc};
+
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let Some(window) = handle.get_webview_window("main") else {
+            return;
+        };
+        let Ok(parent) = window.gtk_window() else {
+            return;
+        };
+        show_main_window(&handle);
+        // rfd's GTK message backend ignores the plugin's parent window.
+        let dialog = gtk::MessageDialog::builder()
+            .transient_for(&parent)
+            .modal(true)
+            .destroy_with_parent(true)
+            .title("WhatheRust update")
+            .text(message)
+            .message_type(match &kind {
+                UpdateDialog::Message(MessageDialogKind::Error) => gtk::MessageType::Error,
+                UpdateDialog::Message(MessageDialogKind::Warning) => gtk::MessageType::Warning,
+                _ => gtk::MessageType::Info,
+            })
+            .build();
+        match kind {
+            UpdateDialog::Install => {
+                dialog.add_button("Later", gtk::ResponseType::Cancel);
+                dialog.add_button("Install", gtk::ResponseType::Ok);
+                dialog.set_default_response(gtk::ResponseType::Cancel);
+            }
+            UpdateDialog::Message(_) => {
+                dialog.add_button("OK", gtk::ResponseType::Ok);
+            }
+        }
+        let confirmed = Rc::new(Cell::new(false));
+        let result = confirmed.clone();
+        let sender = Cell::new(Some(sender));
+        dialog.connect_destroy(move |_| {
+            if let Some(sender) = sender.take() {
+                let _ = sender.send(result.get());
+            }
+        });
+        dialog.connect_response(move |dialog, response| {
+            confirmed.set(response == gtk::ResponseType::Ok);
+            unsafe {
+                // This dialog is no longer used after destruction.
+                dialog.destroy();
+            }
+        });
+        dialog.add_events(gtk::gdk::EventMask::PROPERTY_CHANGE_MASK);
+        dialog.realize();
+        if let Some(window) = dialog
+            .window()
+            .and_then(|window| window.downcast::<gdkx11::X11Window>().ok())
+        {
+            let timestamp = gdkx11::functions::x11_get_server_time(&window);
+            window.set_user_time(timestamp);
+            dialog.present_with_time(timestamp);
+        } else {
+            dialog.present();
+        }
+    });
+    receiver.await.unwrap_or(false)
 }
 
 /// Moves data left by builds made before the app identifier was renamed.
@@ -378,6 +669,137 @@ fn titlebar_color(theme: tauri::Theme) -> tauri::window::Color {
     }
 }
 
+/// WhatsApp Web prefixes its title with the unread chat count, e.g. `(3) WhatsApp`.
+fn unread_count(title: &str) -> u32 {
+    title
+        .trim_start()
+        .strip_prefix('(')
+        .and_then(|rest| rest.split_once(')'))
+        .and_then(|(count, _)| count.trim().trim_end_matches('+').parse().ok())
+        .unwrap_or(0)
+}
+
+/// Shows `count` on the dock (macOS), launcher (Linux), taskbar overlay (Windows) and tray icon; 0 clears it.
+fn show_unread_badge(window: &WebviewWindow, count: u32) {
+    #[cfg(not(target_os = "windows"))]
+    let _ = window.set_badge_count((count > 0).then_some(i64::from(count)));
+
+    #[cfg(target_os = "windows")]
+    {
+        let icon = (count > 0).then(|| {
+            // Render on the native 16px grid so downsampling cannot merge the glyph strokes.
+            const SIZE: u32 = 16;
+            let mut rgba = vec![0; (SIZE * SIZE * 4) as usize];
+            draw_badge(&mut rgba, SIZE, 0, 0, SIZE, &badge_label(count));
+            tauri::image::Image::new_owned(rgba, SIZE, SIZE)
+        });
+        let _ = window.set_overlay_icon(icon.clone());
+        if let Some(tray) = window.app_handle().tray_by_id("main") {
+            // The Windows tray is only 16px: use the whole icon for a readable count.
+            let icon = icon.or_else(|| window.app_handle().default_window_icon().cloned());
+            let _ = tray.set_icon(icon);
+        }
+    }
+
+    // The macOS menu bar icon is a monochrome template, so the Dock badge carries the count there.
+    #[cfg(target_os = "linux")]
+    if let (Some(tray), Some(icon)) = (
+        window.app_handle().tray_by_id("main"),
+        window.app_handle().default_window_icon(),
+    ) {
+        let icon = if count == 0 {
+            icon.clone()
+        } else {
+            let (width, height) = (icon.width(), icon.height());
+            let size = width.min(height) * 5 / 8;
+            let mut rgba = icon.rgba().to_vec();
+            draw_badge(&mut rgba, width, width - size, 0, size, &badge_label(count));
+            tauri::image::Image::new_owned(rgba, width, height)
+        };
+        let _ = tray.set_icon(Some(icon));
+    }
+}
+
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn badge_label(count: u32) -> String {
+    if count > 9 {
+        "9+".into()
+    } else {
+        count.to_string()
+    }
+}
+
+/// Paints a red badge with white `label` text into the `size` px square at `left`, `top` of a straight-alpha RGBA buffer.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn draw_badge(rgba: &mut [u8], width: u32, left: u32, top: u32, size: u32, label: &str) {
+    const RED: [u8; 3] = [0xE5, 0x39, 0x35];
+    // 3x5 pixel glyphs, one row per byte, most significant of the 3 bits on the left.
+    const fn glyph(c: char) -> [u8; 5] {
+        match c {
+            '0' => [7, 5, 5, 5, 7],
+            '1' => [2, 6, 2, 2, 7],
+            '2' => [7, 1, 7, 4, 7],
+            '3' => [7, 1, 7, 1, 7],
+            '4' => [5, 5, 7, 1, 1],
+            '5' => [7, 4, 7, 1, 7],
+            '6' => [7, 4, 7, 5, 7],
+            '7' => [7, 1, 1, 1, 1],
+            '8' => [7, 5, 7, 5, 7],
+            '9' => [7, 5, 7, 1, 7],
+            '+' => [0, 2, 7, 2, 0],
+            _ => [0; 5],
+        }
+    }
+
+    let mut blend = |x: u32, y: u32, color: [u8; 3], alpha: f32| {
+        let i = ((y * width + x) * 4) as usize;
+        let Some(pixel) = rgba.get_mut(i..i + 4) else {
+            return;
+        };
+        let below = f32::from(pixel[3]) / 255.0 * (1.0 - alpha);
+        let out = alpha + below;
+        if out > 0.0 {
+            for (channel, &top) in pixel.iter_mut().zip(&color) {
+                *channel =
+                    ((f32::from(top) * alpha + f32::from(*channel) * below) / out).round() as u8;
+            }
+        }
+        pixel[3] = (out * 255.0).round() as u8;
+    };
+
+    let radius = size as f32 / 2.0;
+    for y in 0..size {
+        for x in 0..size {
+            let distance = (x as f32 + 0.5 - radius).hypot(y as f32 + 0.5 - radius);
+            let coverage = (radius - distance + 0.5).clamp(0.0, 1.0);
+            if coverage > 0.0 {
+                blend(left + x, top + y, RED, coverage);
+            }
+        }
+    }
+
+    let columns = (label.chars().count() * 4).saturating_sub(1).max(1) as u32;
+    let scale = (size * 13 / 20 / columns).min(size * 11 / 20 / 5).max(1);
+    let text_left = left + size.saturating_sub(columns * scale) / 2;
+    let text_top = top + size.saturating_sub(5 * scale) / 2;
+    for (index, c) in label.chars().enumerate() {
+        for (row, bits) in glyph(c).into_iter().enumerate() {
+            for column in 0..3 {
+                if bits & (4 >> column) == 0 {
+                    continue;
+                }
+                let x = text_left + (index as u32 * 4 + column) * scale;
+                let y = text_top + row as u32 * scale;
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        blend(x + dx, y + dy, [255; 3], 1.0);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn is_allowed_url(url: &tauri::Url) -> bool {
     if matches!(url.scheme(), "blob" | "data" | "about") {
         return true;
@@ -417,8 +839,9 @@ fn show_main_window(app: &AppHandle) {
                     .and_then(|window| window.downcast::<gdkx11::X11Window>().ok())
                 {
                     // D-Bus activation has no fresh GDK event timestamp.
-                    gtk_window
-                        .present_with_time(gdkx11::functions::x11_get_server_time(&x11_window));
+                    let timestamp = gdkx11::functions::x11_get_server_time(&x11_window);
+                    x11_window.set_user_time(timestamp);
+                    gtk_window.present_with_time(timestamp);
                     return;
                 }
             }
@@ -426,6 +849,42 @@ fn show_main_window(app: &AppHandle) {
         });
         #[cfg(not(target_os = "linux"))]
         let _ = window.set_focus();
+    }
+}
+
+fn open_settings_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("settings") {
+        if let Err(error) = window.show() {
+            eprintln!("failed to show settings window: {error}");
+        }
+        if let Err(error) = window.unminimize() {
+            eprintln!("failed to unminimize settings window: {error}");
+        }
+        if let Err(error) = window.set_focus() {
+            eprintln!("failed to focus settings window: {error}");
+        }
+        return;
+    }
+
+    let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == "settings")
+    else {
+        eprintln!("missing settings window configuration");
+        return;
+    };
+
+    match WebviewWindowBuilder::from_config(app, config).and_then(|builder| builder.build()) {
+        Ok(window) => {
+            #[cfg(target_os = "windows")]
+            round_corners(&window);
+            #[cfg(not(target_os = "windows"))]
+            let _ = window;
+        }
+        Err(error) => eprintln!("failed to create settings window: {error}"),
     }
 }
 
@@ -445,7 +904,166 @@ fn notification_click_script(id: i32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{NOTIFICATION_CLICK_SCRIPT, is_allowed_url, notification_click_script};
+    use super::{
+        NOTIFICATION_CLICK_SCRIPT, UpdateCheck, UpdateState, badge_label, draw_badge,
+        is_allowed_url, notification_click_script, unread_count,
+    };
+
+    #[test]
+    fn parses_the_unread_count_prefix() {
+        let cases = [
+            ("(3) WhatsApp", 3),
+            ("(128) WhatsApp", 128),
+            (" (1) WhatsApp", 1),
+            ("(99+) WhatsApp", 99),
+            ("WhatsApp", 0),
+            ("(0) WhatsApp", 0),
+            ("WhatsApp (3)", 0),
+            ("(abc) WhatsApp", 0),
+            ("(3 WhatsApp", 0),
+            ("", 0),
+        ];
+
+        for (title, expected) in cases {
+            assert_eq!(unread_count(title), expected, "{title}");
+        }
+    }
+
+    #[test]
+    fn caps_badge_labels_at_nine_plus() {
+        assert_eq!(badge_label(1), "1");
+        assert_eq!(badge_label(9), "9");
+        assert_eq!(badge_label(10), "9+");
+    }
+
+    #[test]
+    fn draws_a_red_badge_with_white_text_inside_its_square() {
+        const WIDTH: u32 = 32;
+        let mut rgba = vec![0; (WIDTH * WIDTH * 4) as usize];
+        draw_badge(&mut rgba, WIDTH, 12, 0, 20, "8");
+        let pixel = |x: u32, y: u32| {
+            let i = ((y * WIDTH + x) * 4) as usize;
+            [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+        };
+
+        assert_eq!(pixel(0, 0), [0; 4], "outside the badge square");
+        assert_eq!(pixel(12, 0)[3], 0, "outside the circle in its corner");
+        assert_eq!(pixel(22, 10), [255, 255, 255, 255], "centre stroke of 8");
+        assert_eq!(pixel(14, 10), [0xE5, 0x39, 0x35, 255], "badge fill");
+        assert_eq!(pixel(22, 25), [0; 4], "below the badge");
+    }
+
+    #[test]
+    fn automatic_checks_respect_dismissed_versions() {
+        let state = UpdateState::default();
+        *state.dismissed.lock().unwrap() = Some("2.0.0".into());
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(!state.should_prompt("2.0.0"));
+        assert!(state.should_prompt("2.0.1"));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn manual_checks_can_prompt_for_dismissed_versions() {
+        let state = UpdateState::default();
+        *state.dismissed.lock().unwrap() = Some("2.0.0".into());
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(!state.should_prompt("2.0.0"));
+        assert!(state.begin(UpdateCheck::Manual).is_none());
+        assert!(state.should_prompt("2.0.0"));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn automatic_checks_can_finish_silently() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(!state.should_report(false));
+        assert!(!busy.retry_manual());
+        assert!(state.begin(UpdateCheck::Manual).is_some());
+    }
+
+    #[test]
+    fn manual_checks_always_report_results() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Manual).unwrap();
+
+        assert!(state.should_report(false));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn manual_requests_upgrade_an_automatic_check() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(state.begin(UpdateCheck::Manual).is_none());
+        assert!(state.begin(UpdateCheck::Automatic).is_none());
+        assert!(state.should_report(false));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn manual_requests_after_a_silent_result_are_retried() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(!state.should_report(false));
+        assert!(state.begin(UpdateCheck::Manual).is_none());
+        assert!(busy.retry_manual());
+        assert!(state.should_report(false));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn requests_during_a_dialog_do_not_start_another_check() {
+        for kind in [UpdateCheck::Automatic, UpdateCheck::Manual] {
+            let state = UpdateState::default();
+            let mut busy = state.begin(kind).unwrap();
+
+            assert!(state.should_report(true));
+            assert!(state.begin(UpdateCheck::Manual).is_none());
+            assert!(state.begin(UpdateCheck::Automatic).is_none());
+            assert!(!busy.retry_manual());
+        }
+    }
+
+    #[test]
+    fn manual_feedback_is_preserved_if_installation_fails() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+
+        assert!(state.begin(UpdateCheck::Manual).is_none());
+        assert!(state.should_report(true));
+        assert!(state.should_report(false));
+        assert!(!busy.retry_manual());
+    }
+
+    #[test]
+    fn dropping_a_finished_guard_does_not_clear_a_new_check() {
+        let state = UpdateState::default();
+        let mut busy = state.begin(UpdateCheck::Automatic).unwrap();
+        assert!(!busy.retry_manual());
+
+        let next = state.begin(UpdateCheck::Manual).unwrap();
+        drop(busy);
+        assert!(state.begin(UpdateCheck::Automatic).is_none());
+        drop(next);
+        assert!(state.begin(UpdateCheck::Automatic).is_some());
+    }
+
+    #[test]
+    fn dropping_an_active_guard_allows_another_check() {
+        let state = UpdateState::default();
+        let busy = state.begin(UpdateCheck::Automatic).unwrap();
+        assert!(state.begin(UpdateCheck::Automatic).is_none());
+
+        drop(busy);
+        assert!(state.begin(UpdateCheck::Manual).is_some());
+    }
 
     #[test]
     fn notification_click_script_uses_the_javascript_hook() {
